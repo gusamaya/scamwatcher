@@ -1,0 +1,1124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Email Detail - ScamWatcher</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            background: #eef2f7;
+            margin: 0;
+            padding: 8px;
+            color: #111827;
+        }
+
+        .page {
+            max-width: 1140px;
+            margin: 0 auto;
+        }
+
+        .hero {
+            background: #ffffff;
+            border: 1px solid #d9e2ec;
+            border-radius: 22px;
+            padding: 24px 28px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 20px;
+            margin-bottom: 18px;
+        }
+
+        .hero-left {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            min-width: 0;
+            flex: 1;
+        }
+
+        .logo-tile {
+            width: 150px;
+            height: 92px;
+            background: #ffffff;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+
+        .logo {
+            max-width: 92px;
+            max-height: 74px;
+            width: auto;
+            height: auto;
+            object-fit: contain;
+            display: block;
+        }
+
+        .hero-text {
+            min-width: 0;
+            flex: 1;
+        }
+
+        .brand-title {
+            margin: 0 0 4px 0;
+            font-size: 28px;
+            line-height: 1.1;
+            color: #0f2d5c;
+            font-weight: 700;
+            white-space: nowrap;
+        }
+
+        .hero-subtitle {
+            margin: 0;
+            font-size: 12px;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            color: #b07a00;
+            font-weight: 700;
+        }
+
+        .hero-tagline {
+            margin: 0;
+            font-size: 11px;
+            line-height: 1.2;
+            color: #6b7280;
+            font-weight: 500;
+            text-align: right;
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+
+        .container {
+            background: #ffffff;
+            border: 1px solid #d9e2ec;
+            border-radius: 18px;
+            padding: 28px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.04);
+        }
+
+        .header-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 16px;
+            margin-bottom: 20px;
+        }
+
+        .page-title {
+            margin: 0;
+            font-size: 24px;
+            color: #14274a;
+        }
+
+        .back-link {
+            text-decoration: none;
+            padding: 8px 14px;
+            background: #eef2f7;
+            color: #1f2937;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            white-space: nowrap;
+            border: 1px solid #dbe3ee;
+        }
+
+        .back-link:hover {
+            background: #e5ebf3;
+        }
+
+        .meta p {
+            margin: 6px 0;
+            font-size: 15px;
+            line-height: 1.5;
+            word-break: break-word;
+        }
+
+        .label {
+            font-weight: 700;
+        }
+
+        h2 {
+            margin-top: 28px;
+            margin-bottom: 10px;
+            font-size: 18px;
+            color: #14274a;
+        }
+
+        .card {
+            background: #f9fafb;
+            border: 1px solid #e5e7eb;
+            border-radius: 10px;
+            padding: 16px;
+        }
+
+        .card p {
+            margin: 0;
+            line-height: 1.55;
+        }
+
+        .delivery-card {
+            background: #f8fafc;
+            border: 1px solid #d9e2ec;
+            border-radius: 12px;
+            padding: 16px;
+            margin-top: 18px;
+        }
+
+        .delivery-note {
+            margin: 0 0 10px 0;
+            font-size: 13px;
+            font-weight: 700;
+            line-height: 1.45;
+        }
+
+        .delivery-note.sent {
+            color: #166534;
+        }
+
+        .delivery-note.sending {
+            color: #c2410c;
+        }
+
+        .delivery-note.failed {
+            color: #991b1b;
+        }
+
+        .delivery-note.pending {
+            color: #1d4ed8;
+        }
+
+        .delivery-grid {
+            display: grid;
+            grid-template-columns: 180px 1fr;
+            gap: 8px 14px;
+            align-items: start;
+        }
+
+        .delivery-label {
+            font-size: 13px;
+            font-weight: 700;
+            color: #334155;
+        }
+
+        .delivery-value {
+            font-size: 13px;
+            line-height: 1.5;
+            color: #475569;
+            word-break: break-word;
+            overflow-wrap: anywhere;
+        }
+
+        .status-pill {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 24px;
+            padding: 0 10px;
+            border-radius: 999px;
+            font-size: 10px;
+            font-weight: 800;
+            letter-spacing: 0.6px;
+            text-transform: uppercase;
+            white-space: nowrap;
+            border: 1px solid transparent;
+        }
+
+        .status-draft {
+            background: #eff6ff;
+            color: #1d4ed8;
+            border-color: #bfdbfe;
+        }
+
+        .status-sending {
+            background: #fff7ed;
+            color: #c2410c;
+            border-color: #fed7aa;
+        }
+
+        .status-sent {
+            background: #dcfce7;
+            color: #166534;
+            border-color: #bbf7d0;
+        }
+
+        .status-failed {
+            background: #fef2f2;
+            color: #991b1b;
+            border-color: #fecaca;
+        }
+
+        .recommended {
+            background: #eef6ff;
+            border: 1px solid #c7ddff;
+            border-radius: 10px;
+            padding: 16px;
+            font-weight: 600;
+            font-size: 15px;
+            line-height: 1.55;
+        }
+
+        .findings-list,
+        .attachment-list {
+            margin: 0;
+            padding-left: 22px;
+            line-height: 1.6;
+        }
+
+        .findings-list li,
+        .attachment-list li {
+            margin-bottom: 8px;
+        }
+
+        .workflow-box {
+            background: #f9fafb;
+            border: 1px solid #e5e7eb;
+            border-radius: 10px;
+            padding: 16px;
+        }
+
+        .btn {
+            appearance: none;
+            border: none;
+            border-radius: 8px;
+            padding: 10px 16px;
+            font-size: 14px;
+            font-weight: 700;
+            cursor: pointer;
+            background: #2563eb;
+            color: white;
+        }
+
+        .btn:hover {
+            background: #1d4ed8;
+        }
+
+        .btn[disabled] {
+            cursor: not-allowed;
+            opacity: 0.6;
+            background: #94a3b8;
+        }
+
+        .preview-shell {
+            background: #eef2f7;
+            border: 1px solid #d9e2ec;
+            border-radius: 16px;
+            padding: 16px;
+        }
+
+        .preview-card {
+            background: #ffffff;
+            border: 1px solid #d9e2ec;
+            border-radius: 18px;
+            padding: 28px;
+        }
+
+        .preview-top {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 20px;
+            margin-bottom: 24px;
+        }
+
+        .preview-top-left {
+            display: flex;
+            align-items: center;
+            gap: 18px;
+            min-width: 0;
+            flex: 1;
+        }
+
+        .preview-logo-wrap {
+            width: 110px;
+            height: 72px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+
+        .preview-logo {
+            max-width: 88px;
+            max-height: 58px;
+            object-fit: contain;
+            display: block;
+        }
+
+        .preview-brand-title {
+            margin: 0 0 4px 0;
+            font-size: 26px;
+            line-height: 1.1;
+            color: #0f2d5c;
+            font-weight: 700;
+        }
+
+        .preview-brand-subtitle {
+            margin: 0;
+            font-size: 12px;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            color: #b07a00;
+            font-weight: 700;
+        }
+
+        .preview-tagline {
+            font-size: 11px;
+            line-height: 1.2;
+            color: #6b7280;
+            font-weight: 500;
+            text-align: right;
+            white-space: nowrap;
+        }
+
+        .preview-copy {
+            font-size: 14px;
+            line-height: 1.7;
+            color: #111827;
+        }
+
+        .preview-copy p {
+            margin: 0 0 10px 0;
+        }
+
+        .preview-intro {
+            margin-bottom: 18px;
+        }
+
+        .preview-intro p:first-child {
+            margin-bottom: 12px;
+        }
+
+        .preview-section {
+            margin-bottom: 20px;
+        }
+
+        .preview-label {
+            font-size: 16px;
+            font-weight: 700;
+            margin: 0 0 6px 0;
+            color: #111827;
+        }
+
+        .preview-risk-value {
+            font-size: 15px;
+            line-height: 1.55;
+            font-weight: 700;
+            margin: 0;
+        }
+
+        .risk-high {
+            color: #b91c1c;
+        }
+
+        .risk-attention {
+            color: #b45309;
+        }
+
+        .risk-low {
+            color: #1d4ed8;
+        }
+
+        .preview-action {
+            font-size: 15px;
+            line-height: 1.55;
+            color: #0f4c8a;
+            font-weight: 700;
+            margin: 0;
+        }
+
+        .preview-observed-title {
+            font-size: 16px;
+            font-weight: 700;
+            margin: 0 0 10px 0;
+            color: #111827;
+        }
+
+        .preview-observed-list {
+            margin: 0 0 22px 0;
+            padding-left: 26px;
+            font-size: 14px;
+            line-height: 1.65;
+            color: #111827;
+        }
+
+        .preview-observed-list li {
+            margin-bottom: 8px;
+            padding-left: 4px;
+        }
+
+        .preview-attachment-box {
+            background: #f9fafb;
+            border: 1px solid #e5e7eb;
+            border-radius: 10px;
+            padding: 14px 16px;
+            margin: 0 0 22px 0;
+        }
+
+        .preview-attachment-box strong {
+            display: block;
+            margin-bottom: 8px;
+            color: #111827;
+        }
+
+        .preview-attachment-box ul {
+            margin: 0;
+            padding-left: 22px;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+
+        .preview-attachment-box li {
+            margin-bottom: 6px;
+        }
+
+        .preview-guidance-strong {
+            font-size: 14px;
+            line-height: 1.75;
+            color: #111827;
+            font-weight: 700;
+            font-style: italic;
+            margin: 0 0 12px 0;
+        }
+
+        .preview-guidance {
+            font-size: 14px;
+            line-height: 1.75;
+            color: #111827;
+            margin: 0 0 34px 0;
+        }
+
+        .preview-signoff {
+            font-size: 14px;
+            line-height: 1.75;
+            color: #111827;
+            margin-top: 2px;
+        }
+
+        .preview-signoff p {
+            margin: 0 0 10px 0;
+        }
+
+        .preview-signoff .name {
+            font-weight: 700;
+        }
+
+        .preview-divider {
+            margin: 28px 0 18px 0;
+            font-size: 12px;
+            line-height: 1.4;
+            color: #6b7280;
+            white-space: pre-wrap;
+            word-break: break-word;
+            overflow-wrap: anywhere;
+        }
+
+        .section-spacer {
+            margin-top: 0;
+        }
+
+        .original-email-title {
+            font-size: 18px;
+            font-weight: 700;
+            margin: 0 0 10px 0;
+            color: #14274a;
+        }
+
+        .original-email-box {
+            font-size: 13px;
+            line-height: 1.6;
+            color: #374151;
+        }
+
+        .original-email-body {
+            margin-top: 12px;
+            white-space: pre-wrap;
+            word-break: break-word;
+            overflow-wrap: anywhere;
+        }
+
+        .helper-text {
+            margin-top: 0;
+            margin-bottom: 10px;
+            color: #6b7280;
+            font-size: 14px;
+        }
+
+        .alert-banner {
+            border-radius: 12px;
+            padding: 14px 16px;
+            margin-top: 20px;
+            margin-bottom: 0;
+            font-size: 14px;
+            line-height: 1.55;
+            font-weight: 600;
+        }
+
+        .alert-banner.warning {
+            background: #fff7ed;
+            border: 1px solid #fdba74;
+            color: #9a3412;
+        }
+
+        .alert-banner.info {
+            background: #eff6ff;
+            border: 1px solid #bfdbfe;
+            color: #1d4ed8;
+        }
+
+        .subtle-text {
+            color: #6b7280;
+            font-size: 14px;
+            line-height: 1.55;
+        }
+
+        @media (max-width: 980px) {
+            .hero,
+            .preview-top {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+
+            .hero-tagline,
+            .preview-tagline {
+                text-align: left;
+                white-space: nowrap;
+                width: auto;
+            }
+        }
+
+        @media (max-width: 700px) {
+            body {
+                padding: 10px;
+            }
+
+            .hero {
+                padding: 18px;
+                border-radius: 18px;
+            }
+
+            .hero-left {
+                gap: 14px;
+            }
+
+            .logo-tile {
+                width: 112px;
+                height: 76px;
+            }
+
+            .logo {
+                max-width: 70px;
+                max-height: 58px;
+            }
+
+            .brand-title {
+                font-size: 24px;
+            }
+
+            .container,
+            .preview-card {
+                padding: 18px;
+            }
+
+            .header-row {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+
+            .btn {
+                width: 100%;
+            }
+
+            .preview-top-left {
+                align-items: flex-start;
+            }
+
+            .delivery-grid {
+                grid-template-columns: 1fr;
+                gap: 6px;
+            }
+        }
+    </style>
+</head>
+<body>
+    {% set ns = namespace(findings_items=[]) %}
+
+    {% if submission.findings %}
+        {% if submission.findings is string %}
+            {% set raw_findings = submission.findings
+                | replace('[', '')
+                | replace(']', '')
+                | replace('"', '')
+            %}
+            {% if "', " in raw_findings %}
+                {% for part in raw_findings.split("', ") %}
+                    {% set item = part | replace("'", "") | trim %}
+                    {% if item %}
+                        {% set _ = ns.findings_items.append(item) %}
+                    {% endif %}
+                {% endfor %}
+            {% elif '., ' in raw_findings %}
+                {% for part in raw_findings.split('., ') %}
+                    {% set item = part | trim %}
+                    {% if item %}
+                        {% if not item.endswith('.') %}
+                            {% set item = item ~ '.' %}
+                        {% endif %}
+                        {% set _ = ns.findings_items.append(item) %}
+                    {% endif %}
+                {% endfor %}
+            {% else %}
+                {% set item = raw_findings | replace("'", "") | trim %}
+                {% if item %}
+                    {% set _ = ns.findings_items.append(item) %}
+                {% endif %}
+            {% endif %}
+        {% else %}
+            {% if submission.findings|length == 1 and ', ' in submission.findings[0] %}
+                {% set single_item = submission.findings[0]
+                    | replace('[', '')
+                    | replace(']', '')
+                    | replace('"', '')
+                    | replace("'", "")
+                %}
+                {% if '., ' in single_item %}
+                    {% for part in single_item.split('., ') %}
+                        {% set item = part | trim %}
+                        {% if item %}
+                            {% if not item.endswith('.') %}
+                                {% set item = item ~ '.' %}
+                            {% endif %}
+                            {% set _ = ns.findings_items.append(item) %}
+                        {% endif %}
+                    {% endfor %}
+                {% else %}
+                    {% for part in single_item.split(', ') %}
+                        {% set item = part | trim %}
+                        {% if item %}
+                            {% set _ = ns.findings_items.append(item) %}
+                        {% endif %}
+                    {% endfor %}
+                {% endif %}
+            {% else %}
+                {% for f in submission.findings %}
+                    {% set item = f | replace('[', '') | replace(']', '') | replace("'", "") | trim %}
+                    {% if item %}
+                        {% set _ = ns.findings_items.append(item) %}
+                    {% endif %}
+                {% endfor %}
+            {% endif %}
+        {% endif %}
+    {% endif %}
+
+    {% set attachment_signals = submission.attachment_signals or {} %}
+    {% set attachment_names = submission.attachment_names or [] %}
+    {% set has_attachments = submission.has_attachments or attachment_names %}
+    {% set pdf_present = attachment_signals.get('pdf_present') %}
+    {% set invoice_like = attachment_signals.get('invoice_like_document') %}
+    {% set receipt_like = attachment_signals.get('receipt_like_document') %}
+    {% set payment_instructions = attachment_signals.get('payment_instructions_present') %}
+    {% set bank_details = attachment_signals.get('bank_details_present') %}
+    {% set updated_payment = attachment_signals.get('updated_payment_details_present') %}
+    {% set sensitive_request = attachment_signals.get('sensitive_info_request_present') %}
+    {% set urgency_in_attachment = attachment_signals.get('urgency_in_attachment') %}
+    {% set attachment_only_action = attachment_signals.get('attachment_only_action_pattern') %}
+    {% set attachment_identity_mismatch = attachment_signals.get('attachment_identity_mismatch') %}
+    {% set attachment_findings = attachment_signals.get('attachment_findings', []) %}
+
+    {% set strong_attachment_warning = updated_payment or sensitive_request or (payment_instructions and urgency_in_attachment) or attachment_identity_mismatch %}
+    {% set moderate_attachment_warning = invoice_like or payment_instructions or bank_details or attachment_only_action or urgency_in_attachment %}
+
+    {% set risk = (submission.risk_rating or '')|lower %}
+    {% if 'high' in risk %}
+        {% set risk_class = 'risk-high' %}
+    {% elif 'attention' in risk %}
+        {% set risk_class = 'risk-attention' %}
+    {% else %}
+        {% set risk_class = 'risk-low' %}
+    {% endif %}
+
+    {% set response_status = (submission.response_status or 'draft')|lower %}
+
+    {% if response_status == 'sent' %}
+        {% set delivery_note_class = 'sent' %}
+        {% set delivery_note_text = 'Response delivered successfully' %}
+    {% elif response_status == 'sending' %}
+        {% set delivery_note_class = 'sending' %}
+        {% set delivery_note_text = 'Response is currently being sent' %}
+    {% elif response_status == 'failed' %}
+        {% set delivery_note_class = 'failed' %}
+        {% set delivery_note_text = 'Response delivery failed' %}
+    {% else %}
+        {% set delivery_note_class = 'pending' %}
+        {% set delivery_note_text = 'Response is awaiting auto-send' %}
+    {% endif %}
+
+    {% set divider = '----------------------------------------------------------------------------------------------------------------' %}
+
+    <div class="page">
+        <div class="hero">
+            <div class="hero-left">
+                <div class="logo-tile">
+                    <img src="{{ url_for('static', filename='logo.png') }}" alt="ScamWatcher Logo" class="logo">
+                </div>
+
+                <div class="hero-text">
+                    <h1 class="brand-title">ScamWatcher</h1>
+                    <p class="hero-subtitle">Advisory Dashboard</p>
+                </div>
+            </div>
+
+            <div class="hero-tagline">Helping people stay safe in a digital world</div>
+        </div>
+
+        <div class="container">
+            <div class="header-row">
+                <h1 class="page-title">Email Detail</h1>
+                <a href="{{ url_for('dashboard') }}" class="back-link">← Back to Dashboard</a>
+            </div>
+
+            <div class="meta">
+                <p><span class="label">From:</span> {{ submission.from_header or "Unknown sender" }}</p>
+                <p><span class="label">Subject:</span> {{ submission.subject or "(No subject)" }}</p>
+                <p>
+                    <span class="label">Received:</span>
+                    <span class="js-format-datetime" data-utc="{{ submission.received_at or '' }}">
+                        {{ submission.received_at or "Unknown" }}
+                    </span>
+                </p>
+            </div>
+
+            <h2>Response Delivery Status</h2>
+            <div class="delivery-card">
+                <p class="delivery-note {{ delivery_note_class }}">{{ delivery_note_text }}</p>
+
+                <div class="delivery-grid">
+                    <div class="delivery-label">Response Status</div>
+                    <div class="delivery-value">
+                        {% if response_status == 'sent' %}
+                            <span class="status-pill status-sent">Sent</span>
+                        {% elif response_status == 'sending' %}
+                            <span class="status-pill status-sending">Sending</span>
+                        {% elif response_status == 'failed' %}
+                            <span class="status-pill status-failed">Failed</span>
+                        {% else %}
+                            <span class="status-pill status-draft">Pending</span>
+                        {% endif %}
+                    </div>
+
+                    <div class="delivery-label">Sent To</div>
+                    <div class="delivery-value">{{ submission.sent_to_email or submission.submitter_email or "Not yet sent" }}</div>
+
+                    <div class="delivery-label">Sent At</div>
+                    <div class="delivery-value">
+                        {% if submission.sent_at %}
+                            <span class="js-format-datetime" data-utc="{{ submission.sent_at }}">
+                                {{ submission.sent_at }}
+                            </span>
+                        {% else %}
+                            Not yet sent
+                        {% endif %}
+                    </div>
+
+                    {% if submission.last_send_attempt_at %}
+                        <div class="delivery-label">Last Attempt</div>
+                        <div class="delivery-value">
+                            <span class="js-format-datetime" data-utc="{{ submission.last_send_attempt_at }}">
+                                {{ submission.last_send_attempt_at }}
+                            </span>
+                        </div>
+                    {% endif %}
+
+                    {% if submission.send_attempts %}
+                        <div class="delivery-label">Attempts</div>
+                        <div class="delivery-value">{{ submission.send_attempts }}</div>
+                    {% endif %}
+
+                    {% if response_status == 'failed' and submission.response_error %}
+                        <div class="delivery-label">Error</div>
+                        <div class="delivery-value">{{ submission.response_error }}</div>
+                    {% endif %}
+                </div>
+            </div>
+
+            <h2>Summary</h2>
+            <div class="card">
+                <p>{{ submission.human_summary or submission.summary or "No summary available." }}</p>
+            </div>
+
+            <h2>Recommended Action</h2>
+            <div class="recommended">
+                {{ submission.recommended_action or "No recommended action available." }}
+            </div>
+
+            {% if has_attachments %}
+                <h2>Attachment Review</h2>
+                <div class="card">
+                    <ul class="attachment-list">
+                        {% if attachment_names %}
+                            <li>Attachment(s) detected: {{ attachment_names | join(', ') }}</li>
+                        {% else %}
+                            <li>One or more attachments were detected in this email.</li>
+                        {% endif %}
+
+                        {% if pdf_present %}
+                            <li>The attachment is the primary risk area in this email.</li>
+                        {% endif %}
+
+                        {% if updated_payment %}
+                            <li>The attachment appears to request updated or changed banking details.</li>
+                        {% elif payment_instructions %}
+                            <li>The attachment appears to request payment or transfer of funds.</li>
+                        {% elif sensitive_request %}
+                            <li>The attachment appears to request personal or identity information.</li>
+                        {% elif invoice_like %}
+                            <li>The attachment appears to be an invoice or payment request.</li>
+                        {% elif receipt_like %}
+                            <li>The attachment appears to be a receipt or remittance notice.</li>
+                        {% endif %}
+
+                        {% if bank_details and not payment_instructions %}
+                            <li>The attachment includes bank or account details.</li>
+                        {% endif %}
+
+                        {% if urgency_in_attachment %}
+                            <li>The attachment uses urgency or pressure language.</li>
+                        {% endif %}
+
+                        {% if attachment_only_action %}
+                            <li>The main request appears to be inside the attachment rather than the email body.</li>
+                        {% endif %}
+
+                        {% if attachment_identity_mismatch %}
+                            <li>The business identity in the attachment does not clearly match the sender.</li>
+                        {% endif %}
+
+                        {% if not pdf_present and not invoice_like and not receipt_like and not payment_instructions and not bank_details and not updated_payment and not sensitive_request and not urgency_in_attachment and not attachment_only_action and not attachment_identity_mismatch %}
+                            <li>No strong attachment-specific warning signs were identified from the data available.</li>
+                        {% endif %}
+                    </ul>
+                </div>
+
+                {% if strong_attachment_warning %}
+                    <div class="alert-banner warning">
+                        Attachment warning: this email includes an attachment with payment, identity, or sender-alignment warning signs. Do not rely on the attachment without independent verification.
+                    </div>
+                {% elif moderate_attachment_warning %}
+                    <div class="alert-banner info">
+                        Attachment note: this email includes an attachment with financial or action-oriented content. Review carefully before opening or relying on it.
+                    </div>
+                {% endif %}
+            {% endif %}
+
+            <h2>Findings</h2>
+            <div class="card">
+                {% if ns.findings_items %}
+                    <ul class="findings-list">
+                        {% for item in ns.findings_items %}
+                            <li>{{ item }}</li>
+                        {% endfor %}
+                    </ul>
+                {% else %}
+                    <p>No findings available.</p>
+                {% endif %}
+            </div>
+
+            <h2>Response Workflow</h2>
+            <div class="workflow-box">
+                <form method="POST">
+                    {% if response_status == 'sent' %}
+                        <button class="btn" name="action" value="approve_send" disabled>
+                            Already Sent
+                        </button>
+                    {% elif response_status == 'sending' %}
+                        <button class="btn" name="action" value="approve_send" disabled>
+                            Sending...
+                        </button>
+                    {% else %}
+                        <button class="btn" name="action" value="approve_send">
+                            Approve and Send
+                        </button>
+                    {% endif %}
+                </form>
+            </div>
+
+            <h2>Serena Response Preview</h2>
+            <p class="helper-text">This is the response Serena will send to the email submitter.</p>
+
+            <div class="preview-shell">
+                <div class="preview-card">
+                    <div class="preview-top">
+                        <div class="preview-top-left">
+                            <div class="preview-logo-wrap">
+                                <img src="{{ url_for('static', filename='logo.png') }}" alt="ScamWatcher Logo" class="preview-logo">
+                            </div>
+                            <div>
+                                <div class="preview-brand-title">ScamWatcher</div>
+                                <div class="preview-brand-subtitle">Advisory Dashboard</div>
+                            </div>
+                        </div>
+
+                        <div class="preview-tagline">Helping people stay safe in a digital world</div>
+                    </div>
+
+                    <div class="preview-copy preview-intro">
+                        <p>Hi,</p>
+                        <p>We have assessed the email you sent to ScamWatcher – outcome details are below.</p>
+                    </div>
+
+                    <div class="preview-section">
+                        <div class="preview-label">Assessment result:</div>
+                        <p class="preview-risk-value {{ risk_class }}">{{ submission.risk_rating or "Needs Attention" }}.</p>
+                    </div>
+
+                    <div class="preview-section">
+                        <div class="preview-label">Recommended Action:</div>
+                        <p class="preview-action">{{ submission.recommended_action or "No recommended action available." }}</p>
+                    </div>
+
+                    <div class="preview-observed-title">What ScamWatcher observed:</div>
+                    <ul class="preview-observed-list">
+                        {% if ns.findings_items %}
+                            {% for item in ns.findings_items[:5] %}
+                                <li>{{ item }}</li>
+                            {% endfor %}
+                        {% else %}
+                            <li>{{ submission.human_summary or submission.summary or "ScamWatcher identified warning signs that suggest this email should be treated with caution." }}</li>
+                        {% endif %}
+                    </ul>
+
+                    {% if has_attachments %}
+                        <div class="preview-attachment-box">
+                            <strong>Attachment Insight:</strong>
+                            <ul>
+                                {% if pdf_present %}
+                                    <li>The attachment is the primary risk area in this email.</li>
+                                {% else %}
+                                    <li>An attachment was included with this email.</li>
+                                {% endif %}
+
+                                {% if updated_payment %}
+                                    <li>The attachment appears to request updated or changed banking details.</li>
+                                {% elif payment_instructions %}
+                                    <li>The attachment appears to request payment or transfer of funds.</li>
+                                {% elif sensitive_request %}
+                                    <li>The attachment appears to request personal or identity information.</li>
+                                {% elif invoice_like %}
+                                    <li>The attachment appears to be an invoice or payment request.</li>
+                                {% elif receipt_like %}
+                                    <li>The attachment appears to be a receipt or remittance notice.</li>
+                                {% endif %}
+
+                                {% if bank_details and not payment_instructions %}
+                                    <li>The attachment includes bank or account details.</li>
+                                {% endif %}
+
+                                {% if attachment_identity_mismatch %}
+                                    <li>The business identity in the attachment does not clearly match the sender.</li>
+                                {% endif %}
+
+                                {% if urgency_in_attachment %}
+                                    <li>The attachment uses urgency or pressure language.</li>
+                                {% endif %}
+
+                                {% if attachment_only_action %}
+                                    <li>The main request appears to be inside the attachment rather than the email body.</li>
+                                {% endif %}
+
+                                {% if not invoice_like and not receipt_like and not payment_instructions and not bank_details and not updated_payment and not sensitive_request and not attachment_identity_mismatch and not urgency_in_attachment and not attachment_only_action %}
+                                    <li>The attachment did not show strong standalone warning signs based on the available review.</li>
+                                {% endif %}
+                            </ul>
+                        </div>
+                    {% endif %}
+
+                    {% if 'low' in risk %}
+                        <p class="preview-guidance-strong">No immediate action is required. If this message is not relevant, it can be safely ignored.</p>
+                        <p class="preview-guidance">If you are considering engaging, ensure any response or action is appropriate for your situation.</p>
+                    {% elif 'high' in risk %}
+                        <p class="preview-guidance-strong">Do not open or act on this attachment unless independently verified.</p>
+                        <p class="preview-guidance">Verify any request using contact details sourced independently from the email, and do not rely on any attachment without verification.</p>
+                    {% else %}
+                        <p class="preview-guidance-strong">Do not take further action unless the request has been independently verified.</p>
+                        <p class="preview-guidance">Verify any request using contact details sourced independently from the email, and do not rely on any attachment without verification.</p>
+                    {% endif %}
+
+                    <div class="preview-signoff">
+                        <p>Regards,</p>
+                        <p class="name">Serena</p>
+                        <p>ScamWatcher Advisor</p>
+                        <p>ScamWatcher is an independent advisory service.</p>
+                    </div>
+
+                    <div class="preview-divider">{{ divider }}</div>
+
+                    <div class="section-spacer">
+                        <div class="original-email-title">Original Email (for reference)</div>
+                        <div class="original-email-box">
+                            <div><strong>From:</strong> {{ submission.from_header or "Unknown sender" }}</div>
+                            <div><strong>Subject:</strong> {{ submission.subject or "(No subject)" }}</div>
+                            <div>
+                                <strong>Received:</strong>
+                                <span class="js-format-datetime" data-utc="{{ submission.received_at or '' }}">
+                                    {{ submission.received_at or "Unknown" }}
+                                </span>
+                            </div>
+
+                            {% if has_attachments %}
+                                <div style="margin-top: 10px;"><strong>Attachments:</strong> {{ attachment_names | join(', ') if attachment_names else 'Attachment detected' }}</div>
+                            {% endif %}
+
+                            <div class="original-email-body">{{ submission.body or "No original email body available." }}</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            {% if has_attachments and not attachment_signals %}
+                <p class="subtle-text" style="margin-top: 14px;">
+                    Note: attachment-specific review data was not available to display in full on this submission.
+                </p>
+            {% endif %}
+        </div>
+    </div>
+
+    <script>
+        function formatUtcDateTime(value) {
+            if (!value) return "";
+
+            const normalized = value.trim().replace(" ", "T") + "Z";
+            const date = new Date(normalized);
+
+            if (isNaN(date.getTime())) {
+                return value;
+            }
+
+            const day = date.getDate();
+            const month = date.toLocaleString(undefined, { month: "short" });
+            const hours24 = date.getHours();
+            const minutes = String(date.getMinutes()).padStart(2, "0");
+            const hours12 = ((hours24 + 11) % 12) + 1;
+            const ampm = hours24 >= 12 ? "pm" : "am";
+
+            return `${day} ${month}, ${hours12}:${minutes}${ampm}`;
+        }
+
+        document.querySelectorAll(".js-format-datetime").forEach((el) => {
+            const raw = el.getAttribute("data-utc");
+            if (!raw) return;
+
+            const formatted = formatUtcDateTime(raw);
+            if (formatted) {
+                el.textContent = formatted;
+            }
+        });
+    </script>
+</body>
+</html>
