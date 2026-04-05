@@ -1,4 +1,5 @@
 fastapi==0.115.0
+gunicorn
 uvicorn[standard]==0.30.6
 python-multipart==0.0.9
 email-validator==2.2.0
