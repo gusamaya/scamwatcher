@@ -1,10 +1,15 @@
-import sqlite3
 import json
+import os
+import sqlite3
 
-DB_NAME = "scamwatcher.db"
+DB_NAME = os.getenv("DB_PATH", "/var/data/scamwatcher.db")
 
 
 def get_connection():
+    db_dir = os.path.dirname(DB_NAME)
+    if db_dir:
+        os.makedirs(db_dir, exist_ok=True)
+
     conn = sqlite3.connect(DB_NAME)
     conn.row_factory = sqlite3.Row
     return conn
@@ -21,12 +26,18 @@ def ensure_columns():
     required_columns = {
         "response_status": "TEXT DEFAULT 'draft'",
         "sent_at": "TEXT",
+        "sent_to_email": "TEXT",
+        "is_internal": "INTEGER DEFAULT 0",
+        "exclude_from_calibration": "INTEGER DEFAULT 0",
         "submitter_name": "TEXT",
         "submitter_email": "TEXT",
         "submitter_from_header": "TEXT",
         "has_attachments": "INTEGER DEFAULT 0",
         "attachment_names": "TEXT",
         "attachment_signals": "TEXT",
+        "response_error": "TEXT",
+        "last_send_attempt_at": "TEXT",
+        "send_attempts": "INTEGER DEFAULT 0",
     }
 
     for column_name, column_type in required_columns.items():
@@ -185,7 +196,6 @@ def insert_submission(
     attachment_signals=None,
     **kwargs,
 ):
-    # Support older/flexible callers that may pass sender instead of from_header
     if (not from_header) and kwargs.get("sender"):
         from_header = kwargs.get("sender")
 
@@ -219,14 +229,20 @@ def insert_submission(
             confidence_reason,
             response_status,
             sent_at,
+            sent_to_email,
+            is_internal,
+            exclude_from_calibration,
             submitter_name,
             submitter_email,
             submitter_from_header,
             has_attachments,
             attachment_names,
-            attachment_signals
+            attachment_signals,
+            response_error,
+            last_send_attempt_at,
+            send_attempts
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         message_id,
         received_at,
@@ -246,12 +262,18 @@ def insert_submission(
         confidence_reason,
         "draft",
         None,
+        None,
+        0,
+        0,
         submitter_name,
         submitter_email,
         submitter_from_header,
         has_attachments_int,
         attachment_names_json,
         attachment_signals_json,
+        None,
+        None,
+        0,
     ))
 
     conn.commit()
