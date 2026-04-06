@@ -255,6 +255,24 @@
             border-color: #fecaca;
         }
 
+        .status-review-unreviewed {
+            background: #f1f5f9;
+            color: #475569;
+            border-color: #cbd5e1;
+        }
+
+        .status-review-correct {
+            background: #dcfce7;
+            color: #166534;
+            border-color: #bbf7d0;
+        }
+
+        .status-review-required {
+            background: #fff7ed;
+            color: #c2410c;
+            border-color: #fed7aa;
+        }
+
         .recommended {
             background: #eef6ff;
             border: 1px solid #c7ddff;
@@ -304,6 +322,39 @@
             cursor: not-allowed;
             opacity: 0.6;
             background: #94a3b8;
+        }
+
+        .btn-secondary {
+            background: #0f766e;
+            color: #ffffff;
+        }
+
+        .btn-secondary:hover {
+            background: #0d665f;
+        }
+
+        .btn-warning {
+            background: #d97706;
+            color: #ffffff;
+        }
+
+        .btn-warning:hover {
+            background: #b45309;
+        }
+
+        .btn-light {
+            background: #e5e7eb;
+            color: #1f2937;
+        }
+
+        .btn-light:hover {
+            background: #d1d5db;
+        }
+
+        .button-row {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
         }
 
         .preview-shell {
@@ -644,6 +695,10 @@
                 grid-template-columns: 1fr;
                 gap: 6px;
             }
+
+            .button-row {
+                flex-direction: column;
+            }
         }
     </style>
 </head>
@@ -745,6 +800,7 @@
     {% endif %}
 
     {% set response_status = (submission.response_status or 'draft')|lower %}
+    {% set review_status = (submission.review_status or 'unreviewed')|lower %}
 
     {% if response_status == 'sent' %}
         {% set delivery_note_class = 'sent' %}
@@ -758,6 +814,17 @@
     {% else %}
         {% set delivery_note_class = 'pending' %}
         {% set delivery_note_text = 'Response is awaiting auto-send' %}
+    {% endif %}
+
+    {% if review_status == 'correct' %}
+        {% set review_status_class = 'status-review-correct' %}
+        {% set review_status_text = 'Appears Correct' %}
+    {% elif review_status == 'review_required' %}
+        {% set review_status_class = 'status-review-required' %}
+        {% set review_status_text = 'Review Required' %}
+    {% else %}
+        {% set review_status_class = 'status-review-unreviewed' %}
+        {% set review_status_text = 'Unreviewed' %}
     {% endif %}
 
     {% set divider = '----------------------------------------------------------------------------------------------------------------' %}
@@ -846,6 +913,29 @@
                         <div class="delivery-value">{{ submission.response_error }}</div>
                     {% endif %}
                 </div>
+            </div>
+
+            <h2>Admin Review</h2>
+            <div class="workflow-box">
+                <p class="helper-text">Use this simple flag to mark whether the submission looks right or should be reviewed further.</p>
+
+                <div style="margin-bottom: 14px;">
+                    <span class="status-pill {{ review_status_class }}">{{ review_status_text }}</span>
+                </div>
+
+                <form method="POST">
+                    <div class="button-row">
+                        <button class="btn btn-secondary" name="action" value="mark_correct">
+                            Appears Correct
+                        </button>
+                        <button class="btn btn-warning" name="action" value="mark_review_required">
+                            Review Required
+                        </button>
+                        <button class="btn btn-light" name="action" value="clear_review">
+                            Clear Review
+                        </button>
+                    </div>
+                </form>
             </div>
 
             <h2>Summary</h2>
