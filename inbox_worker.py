@@ -30,19 +30,6 @@ def _now():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
-def _normalise_list(value):
-    if not value:
-        return []
-
-    if isinstance(value, list):
-        return [item for item in value if item is not None]
-
-    if isinstance(value, tuple):
-        return [item for item in value if item is not None]
-
-    return [value]
-
-
 def _normalise_email_record(record):
     if not isinstance(record, dict):
         return {
@@ -58,7 +45,7 @@ def _normalise_email_record(record):
             "attachment_names": [],
             "attachments": [],
             "attachment_text": "",
-            "raw": record,
+            "raw": {},
         }
 
     message_id = (
@@ -273,11 +260,9 @@ def _insert_submission_flexible(insert_submission, email_record, clean):
         "from_header": email_record["from_header"],
         "subject": email_record["subject"],
         "body": email_record["body"],
-
         "submitter_name": email_record["raw"].get("submitter_name"),
         "submitter_email": email_record["raw"].get("submitter_email"),
         "submitter_from_header": email_record["raw"].get("submitter_from_header"),
-
         "risk_score": clean["risk_score"],
         "risk_rating": clean["risk_rating"],
         "summary": clean["summary"],
@@ -289,7 +274,6 @@ def _insert_submission_flexible(insert_submission, email_record, clean):
         "confidence_label": clean["confidence_label"],
         "confidence_reason": clean["confidence_reason"],
         "reply_to": email_record["reply_to"],
-
         "has_attachments": int(bool(email_record["has_attachments"])),
         "attachment_names": json.dumps(email_record["attachment_names"]),
         "attachment_signals": json.dumps(clean.get("attachment_signals", {})),
@@ -314,11 +298,13 @@ def _insert_submission_flexible(insert_submission, email_record, clean):
             clean["human_summary"],
             clean["findings"],
             clean["recommended_action"],
-            clean["should_reply"],
             clean["proposed_response"],
+            clean["should_reply"],
             clean["confidence_label"],
             clean["confidence_reason"],
-            email_record["reply_to"],
+            email_record["raw"].get("submitter_name"),
+            email_record["raw"].get("submitter_email"),
+            email_record["raw"].get("submitter_from_header"),
             int(bool(email_record["has_attachments"])),
             json.dumps(email_record["attachment_names"]),
             json.dumps(clean.get("attachment_signals", {})),
@@ -327,7 +313,6 @@ def _insert_submission_flexible(insert_submission, email_record, clean):
         return insert_submission(
             email_record["message_id"],
             email_record["received_at"],
-            email_record["sender"],
             email_record["from_header"],
             email_record["subject"],
             email_record["body"],
@@ -337,8 +322,8 @@ def _insert_submission_flexible(insert_submission, email_record, clean):
             clean["human_summary"],
             clean["findings"],
             clean["recommended_action"],
-            clean["should_reply"],
             clean["proposed_response"],
+            clean["should_reply"],
             clean["confidence_label"],
             clean["confidence_reason"],
         )
@@ -409,6 +394,7 @@ def main():
         database,
         [
             "submission_exists",
+            "submission_exists_by_message_id",
             "message_exists",
             "record_exists",
             "email_exists",
