@@ -19,10 +19,13 @@ AUDIT_BCC_EMAIL = "scamwatcher.audit@gmail.com"
 AUTO_SEND_ENABLED = os.getenv("AUTO_SEND_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
 AUTO_SEND_INTERVAL_SECONDS = int(os.getenv("AUTO_SEND_INTERVAL_SECONDS", "15"))
 
+INBOX_WORKER_ENABLED = os.getenv("INBOX_WORKER_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "scamwatcher-secret")
 
 _auto_send_thread_started = False
+_inbox_worker_thread_started = False
 
 
 def get_connection():
@@ -785,6 +788,36 @@ def start_auto_send_thread():
     print(f"[AutoSend] Started. Interval: {AUTO_SEND_INTERVAL_SECONDS}s")
 
 
+def start_inbox_worker_thread():
+    global _inbox_worker_thread_started
+
+    if _inbox_worker_thread_started or not INBOX_WORKER_ENABLED:
+        return
+
+    try:
+        import inbox_worker
+    except Exception as exc:
+        print(f"[InboxWorker] Import failed: {exc}")
+        return
+
+    def _run_worker():
+        try:
+            print("[InboxWorker] Starting embedded inbox worker thread...")
+            inbox_worker.main()
+        except Exception as exc:
+            print(f"[InboxWorker] Worker stopped due to error: {exc}")
+
+    thread = threading.Thread(target=_run_worker, daemon=True)
+    thread.start()
+    _inbox_worker_thread_started = True
+    print("[InboxWorker] Embedded worker thread started.")
+
+
+def start_background_threads():
+    start_auto_send_thread()
+    start_inbox_worker_thread()
+
+
 def get_submissions(filter_value):
     conn = get_connection()
 
@@ -825,9 +858,9 @@ ensure_schema()
 
 
 @app.before_request
-def warm_auto_send():
+def warm_background_threads():
     if os.environ.get("WERKZEUG_RUN_MAIN") == "true" or not app.debug:
-        start_auto_send_thread()
+        start_background_threads()
 
 
 @app.route("/")
@@ -857,6 +890,6 @@ def submission_detail(submission_id):
 
 
 if __name__ == "__main__":
-    start_auto_send_thread()
+    start_background_threads()
     port = int(os.environ.get("PORT", "5000"))
     app.run(host="0.0.0.0", port=port, debug=True)
