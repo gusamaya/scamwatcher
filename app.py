@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-DB_NAME = "scamwatcher.db"
+DB_NAME = os.getenv("DB_PATH", "/var/data/scamwatcher.db")
 AUDIT_BCC_EMAIL = "scamwatcher.audit@gmail.com"
 
 AUTO_SEND_ENABLED = os.getenv("AUTO_SEND_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
@@ -26,6 +26,10 @@ _auto_send_thread_started = False
 
 
 def get_connection():
+    db_dir = os.path.dirname(DB_NAME)
+    if db_dir:
+        os.makedirs(db_dir, exist_ok=True)
+
     conn = sqlite3.connect(DB_NAME, timeout=30)
     conn.row_factory = sqlite3.Row
     return conn
@@ -651,10 +655,6 @@ def mark_failed(submission_id, error_message):
 
 
 def try_claim_submission_for_sending(submission_id):
-    """
-    Duplicate protection:
-    claim the row only if it is not already sent/sending.
-    """
     conn = get_connection()
     try:
         conn.execute("BEGIN IMMEDIATE")
@@ -821,16 +821,11 @@ def get_submissions(filter_value):
     return results
 
 
-# Ensure DB is ready on startup for Gunicorn / Render
 ensure_schema()
 
 
 @app.before_request
 def warm_auto_send():
-    """
-    Starts the auto-send thread once the app receives traffic.
-    This avoids duplicate threads under the Flask reloader.
-    """
     if os.environ.get("WERKZEUG_RUN_MAIN") == "true" or not app.debug:
         start_auto_send_thread()
 
