@@ -27,6 +27,11 @@ app.secret_key = os.getenv("SECRET_KEY", "scamwatcher-secret")
 _auto_send_thread_started = False
 _inbox_worker_thread_started = False
 
+# In-memory admin review flags for MVP only.
+# Values: "unreviewed", "correct", "review_required"
+_review_flags = {}
+_review_lock = threading.Lock()
+
 
 def get_connection():
     db_dir = os.path.dirname(DB_NAME)
@@ -40,6 +45,34 @@ def get_connection():
 
 def now():
     return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def get_review_status(submission_id):
+    with _review_lock:
+        return _review_flags.get(int(submission_id), "unreviewed")
+
+
+def set_review_status(submission_id, status):
+    submission_id = int(submission_id)
+    normalized = (status or "").strip().lower()
+
+    if normalized not in {"unreviewed", "correct", "review_required"}:
+        normalized = "unreviewed"
+
+    with _review_lock:
+        if normalized == "unreviewed":
+            _review_flags.pop(submission_id, None)
+        else:
+            _review_flags[submission_id] = normalized
+
+
+def review_status_label(status):
+    status = (status or "unreviewed").strip().lower()
+    if status == "correct":
+        return "Appears Correct"
+    if status == "review_required":
+        return "Review Required"
+    return "Unreviewed"
 
 
 def parse_findings(value):
@@ -295,7 +328,10 @@ def get_submission(submission_id):
     if not row:
         return None
 
-    return prepare_submission_record(dict(row))
+    submission = prepare_submission_record(dict(row))
+    submission["review_status"] = get_review_status(submission_id)
+    submission["review_status_label"] = review_status_label(submission["review_status"])
+    return submission
 
 
 def get_mail_config():
@@ -849,6 +885,8 @@ def get_submissions(filter_value):
     results = []
     for row in rows:
         item = prepare_submission_record(dict(row))
+        item["review_status"] = get_review_status(item.get("id"))
+        item["review_status_label"] = review_status_label(item["review_status"])
         results.append(item)
 
     return results
@@ -877,11 +915,26 @@ def submission_detail(submission_id):
         abort(404)
 
     if request.method == "POST":
-        action = request.form.get("action")
+        action = (request.form.get("action") or "").strip().lower()
 
         if action == "approve_send":
             success, message = send_submission_response(submission_id, manual=True)
             flash(message, "success" if success else "error")
+            return redirect(url_for("submission_detail", submission_id=submission_id))
+
+        if action == "mark_correct":
+            set_review_status(submission_id, "correct")
+            flash("Review flag updated: Appears Correct.", "success")
+            return redirect(url_for("submission_detail", submission_id=submission_id))
+
+        if action == "mark_review_required":
+            set_review_status(submission_id, "review_required")
+            flash("Review flag updated: Review Required.", "success")
+            return redirect(url_for("submission_detail", submission_id=submission_id))
+
+        if action == "clear_review":
+            set_review_status(submission_id, "unreviewed")
+            flash("Review flag cleared.", "success")
             return redirect(url_for("submission_detail", submission_id=submission_id))
 
         return redirect(url_for("submission_detail", submission_id=submission_id))
