@@ -20,7 +20,7 @@ AUTO_SEND_ENABLED = os.getenv("AUTO_SEND_ENABLED", "true").strip().lower() in {"
 AUTO_SEND_INTERVAL_SECONDS = int(os.getenv("AUTO_SEND_INTERVAL_SECONDS", "15"))
 
 app = Flask(__name__)
-app.secret_key = "scamwatcher-secret"
+app.secret_key = os.getenv("SECRET_KEY", "scamwatcher-secret")
 
 _auto_send_thread_started = False
 
@@ -821,6 +821,10 @@ def get_submissions(filter_value):
     return results
 
 
+# Ensure DB is ready on startup for Gunicorn / Render
+ensure_schema()
+
+
 @app.before_request
 def warm_auto_send():
     """
@@ -858,6 +862,6 @@ def submission_detail(submission_id):
 
 
 if __name__ == "__main__":
-    ensure_schema()
     start_auto_send_thread()
-    app.run(debug=True)
+    port = int(os.environ.get("PORT", "5000"))
+    app.run(host="0.0.0.0", port=port, debug=True)
