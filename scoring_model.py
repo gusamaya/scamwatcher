@@ -25,31 +25,43 @@ KNOWN_BRANDS = {
     "telstra": ["telstra.com.au"],
 }
 
-URGENCY_PATTERNS = [r"\burgent\b", r"\bimmediately\b", r"\basap\b", r"\bright now\b",
-                    r"\bwithin \d+ (hours?|days?)\b", r"\baction required\b", r"\bfinal notice\b",
-                    r"\brespond now\b", r"\btime sensitive\b", r"\bverify now\b", r"\bact now\b",
-                    r"\bimportant notice\b"]
+URGENCY_PATTERNS = [
+    r"\burgent\b", r"\bimmediately\b", r"\basap\b", r"\bright now\b",
+    r"\bwithin \d+ (hours?|days?)\b", r"\baction required\b", r"\bfinal notice\b",
+    r"\brespond now\b", r"\btime sensitive\b", r"\bverify now\b", r"\bact now\b",
+    r"\bimportant notice\b"
+]
 
-PAYMENT_PATTERNS = [r"\bpayment\b", r"\bpay\b", r"\btransfer\b", r"\bbank transfer\b",
-                    r"\bwire\b", r"\bremittance\b", r"\binvoice\b", r"\bdeposit\b",
-                    r"\bbsb\b", r"\baccount number\b", r"\bpayid\b", r"\bgift card\b",
-                    r"\bsettlement\b", r"\boverdue\b", r"\bsend me money\b"]
+PAYMENT_PATTERNS = [
+    r"\bpayment\b", r"\bpay\b", r"\btransfer\b", r"\bbank transfer\b",
+    r"\bwire\b", r"\bremittance\b", r"\binvoice\b", r"\bdeposit\b",
+    r"\bbsb\b", r"\baccount number\b", r"\bpayid\b", r"\bgift card\b",
+    r"\bsettlement\b", r"\boverdue\b", r"\bsend me money\b"
+]
 
-CREDENTIAL_PATTERNS = [r"\bpassword\b", r"\blogin\b", r"\bsign in\b", r"\bverification code\b",
-                       r"\bpin code\b", r"\b2fa\b", r"\bmfa\b", r"\bone-time code\b",
-                       r"\botp\b", r"\bconfirm your account\b", r"\bverify your identity\b",
-                       r"\bsecurity alert\b"]
+CREDENTIAL_PATTERNS = [
+    r"\bpassword\b", r"\blogin\b", r"\bsign in\b", r"\bverification code\b",
+    r"\bpin code\b", r"\b2fa\b", r"\bmfa\b", r"\bone-time code\b",
+    r"\botp\b", r"\bconfirm your account\b", r"\bverify your identity\b",
+    r"\bsecurity alert\b"
+]
 
-PROMOTION_PATTERNS = [r"promo code", r"prize", r"reward", r"bonus", r"\bwon\b", r"winner",
-                      r"winner id", r"claim now", r"congratulations", r"free", r"giveaway",
-                      r"new notification"]
+PROMOTION_PATTERNS = [
+    r"promo code", r"prize", r"reward", r"bonus", r"\bwon\b", r"winner",
+    r"winner id", r"claim now", r"congratulations", r"free", r"giveaway",
+    r"new notification"
+]
 
-SENSITIVE_INFO_PATTERNS = [r"\bdriver'?s licence\b", r"\bpassport\b", r"\bmedicare\b",
-                            r"\bdate of birth\b", r"\bdob\b", r"\bpersonal information\b",
-                            r"\bidentity\b", r"\baccount information\b"]
+SENSITIVE_INFO_PATTERNS = [
+    r"\bdriver'?s licence\b", r"\bpassport\b", r"\bmedicare\b",
+    r"\bdate of birth\b", r"\bdob\b", r"\bpersonal information\b",
+    r"\bidentity\b", r"\baccount information\b"
+]
 
-GENERIC_GREETING_PATTERNS = [r"\bdear customer\b", r"\bdear user\b", r"\bhello customer\b",
-                             r"\bvalued customer\b"]
+GENERIC_GREETING_PATTERNS = [
+    r"\bdear customer\b", r"\bdear user\b", r"\bhello customer\b",
+    r"\bvalued customer\b"
+]
 
 SUSPICIOUS_TLDS = {".ru", ".cn", ".top", ".xyz", ".click", ".shop", ".info", ".biz"}
 
@@ -60,7 +72,7 @@ def _safe_lower(value):
 
 
 def _extract_email_address(from_header):
-    """Extract the email address from the 'From' header."""
+    """Extract the email address from the From header."""
     if not from_header:
         return ""
     match = re.search(r"<([^>]+)>", from_header)
@@ -71,7 +83,7 @@ def _extract_email_address(from_header):
 
 
 def _extract_display_name(from_header):
-    """Extract the display name from the 'From' header."""
+    """Extract the display name from the From header."""
     if not from_header:
         return ""
     return from_header.split("<", 1)[0].strip().strip('"').strip() if "<" in from_header else ""
@@ -94,7 +106,9 @@ def _get_domain_from_url(url):
     """Extract domain from a URL."""
     try:
         parsed = urlparse(url)
-        domain = (parsed.netloc or "").lower().strip().lstrip("www.")
+        domain = (parsed.netloc or "").lower().strip()
+        if domain.startswith("www."):
+            domain = domain[4:]
         return domain
     except Exception:
         return ""
@@ -120,12 +134,16 @@ def _domain_matches_brand(domain, brand):
 
 
 def _looks_like_suspicious_sender_format(email_address):
-    """Determine if the sender's email format looks suspicious."""
+    """Determine if the sender email format looks suspicious."""
     if not email_address:
         return True
 
     local_part = email_address.split("@", 1)[0]
-    return (len(local_part) > 35 or re.search(r"\d{5,}", local_part) or re.search(r"[._-]{3,}", local_part))
+    return (
+        len(local_part) > 35
+        or re.search(r"\d{5,}", local_part)
+        or re.search(r"[._-]{3,}", local_part)
+    )
 
 
 def _looks_like_deceptive_domain(domain):
@@ -150,13 +168,24 @@ def _build_signals(from_header, subject, body):
 
     brand_mentions = _find_brand_mentions(combined_text)
 
-    sender_brand_aligned = any(sender_domain and _domain_matches_brand(sender_domain, brand) for brand in brand_mentions)
-    any_link_brand_aligned = any(any(_domain_matches_brand(link_domain, brand) for brand in brand_mentions) for link_domain in url_domains)
-    has_brand_domain_mismatch = any(sender_domain and not _domain_matches_brand(sender_domain, brand) for brand in brand_mentions)
+    sender_brand_aligned = any(
+        sender_domain and _domain_matches_brand(sender_domain, brand)
+        for brand in brand_mentions
+    )
+    any_link_brand_aligned = any(
+        any(_domain_matches_brand(link_domain, brand) for brand in brand_mentions)
+        for link_domain in url_domains
+    )
+    has_brand_domain_mismatch = any(
+        sender_domain and not _domain_matches_brand(sender_domain, brand)
+        for brand in brand_mentions
+    )
 
     suspicious_link_domains = [domain for domain in url_domains if _looks_like_deceptive_domain(domain)]
     mass_recipient_count = (body or "").count("@")
-    account_reference = bool(re.search(r"\b(account|wallet|notification|security|message)\b", _safe_lower(combined_text)))
+    account_reference = bool(
+        re.search(r"\b(account|wallet|notification|security|message)\b", _safe_lower(combined_text))
+    )
 
     signals = {
         "sender_email": sender_email,
@@ -171,7 +200,15 @@ def _build_signals(from_header, subject, body):
         "suspicious_sender_format": _looks_like_suspicious_sender_format(sender_email),
         "sender_brand_aligned": sender_brand_aligned,
         "any_link_brand_aligned": any_link_brand_aligned,
-        "trusted_brand_notification": bool(brand_mentions) and (sender_brand_aligned or any_link_brand_aligned) and not has_brand_domain_mismatch and not suspicious_link_domains,
+        "has_brand_domain_mismatch": has_brand_domain_mismatch,
+        "domain_mismatch": has_brand_domain_mismatch,
+        "trusted_brand_alignment": bool(sender_brand_aligned or any_link_brand_aligned),
+        "trusted_brand_notification": (
+            bool(brand_mentions)
+            and (sender_brand_aligned or any_link_brand_aligned)
+            and not has_brand_domain_mismatch
+            and not suspicious_link_domains
+        ),
         "urgency": _matches_any_pattern(combined_text, URGENCY_PATTERNS),
         "payment_request": _matches_any_pattern(combined_text, PAYMENT_PATTERNS),
         "credential_request": _matches_any_pattern(combined_text, CREDENTIAL_PATTERNS),
@@ -180,7 +217,9 @@ def _build_signals(from_header, subject, body):
         "generic_greeting": _matches_any_pattern(combined_text, GENERIC_GREETING_PATTERNS),
         "mass_recipients": mass_recipient_count >= 3,
         "deceptive_link_domain": bool(suspicious_link_domains),
-        "suspicious_link": bool(suspicious_link_domains) or (has_brand_domain_mismatch and not (sender_brand_aligned or any_link_brand_aligned)),
+        "suspicious_link": bool(suspicious_link_domains) or (
+            has_brand_domain_mismatch and not (sender_brand_aligned or any_link_brand_aligned)
+        ),
         "account_reference": account_reference,
         "gift_card_language": bool(re.search(r"\bgift card\b", _safe_lower(combined_text))),
     }
@@ -296,7 +335,6 @@ def _apply_combination_rules(signals, score, findings):
         score -= 18
         findings.append("This appears to be an account or security notification from an aligned branded domain.")
 
-    # Promotional override
     if signals["promotion"] and not (
         signals["payment_request"]
         or signals["credential_request"]
@@ -306,7 +344,6 @@ def _apply_combination_rules(signals, score, findings):
         score = min(score, 25)
         findings.append("The message appears to be general promotional or marketing communication.")
 
-    # Trusted branded account/security notification cap
     if (
         signals["trusted_brand_notification"]
         and signals["credential_request"]
@@ -323,7 +360,6 @@ def _apply_combination_rules(signals, score, findings):
 
 def _apply_risk_floors(signals, score):
     """Apply risk floors based on specific signals."""
-    # Skip floors for clean promotional emails
     if signals["promotion"] and not (
         signals["payment_request"]
         or signals["credential_request"]
@@ -332,7 +368,6 @@ def _apply_risk_floors(signals, score):
     ):
         return min(score, 30)
 
-    # Soften credential floor for aligned branded notifications
     if not (
         signals["trusted_brand_notification"]
         and signals["credential_request"]
@@ -444,7 +479,7 @@ def score_attachment_signals(attachment_signals):
     ):
         floor_flags["prevent_low_risk"] = True
 
-    unique_reasons = list(set(reasons))  # Remove duplicates
+    unique_reasons = list(set(reasons))
 
     return {
         "score": min(max(score, 0), 100),
@@ -461,7 +496,7 @@ def assess_email_risk(from_header, subject, body):
     score, findings = _apply_combination_rules(signals, score, findings)
     score = _apply_risk_floors(signals, score)
 
-    unique_findings = list(set(findings))  # Remove duplicates
+    unique_findings = list(set(findings))
 
     return {
         "score": score,
