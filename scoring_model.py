@@ -1,11 +1,23 @@
 import re
 from urllib.parse import urlparse
 
+
 FREE_EMAIL_PROVIDERS = {
-    "gmail.com", "googlemail.com", "yahoo.com", "yahoo.com.au", "hotmail.com",
-    "outlook.com", "live.com", "icloud.com", "aol.com", "proton.me",
-    "protonmail.com", "bigpond.com", "bigpond.net.au",
+    "gmail.com",
+    "googlemail.com",
+    "yahoo.com",
+    "yahoo.com.au",
+    "hotmail.com",
+    "outlook.com",
+    "live.com",
+    "icloud.com",
+    "aol.com",
+    "proton.me",
+    "protonmail.com",
+    "bigpond.com",
+    "bigpond.net.au",
 }
+
 
 KNOWN_BRANDS = {
     "google": ["google.com", "accounts.google.com", "workspace.google.com"],
@@ -25,54 +37,98 @@ KNOWN_BRANDS = {
     "telstra": ["telstra.com.au"],
 }
 
+
 URGENCY_PATTERNS = [
-    r"\burgent\b", r"\bimmediately\b", r"\basap\b", r"\bright now\b",
-    r"\bwithin \d+ (hours?|days?)\b", r"\baction required\b", r"\bfinal notice\b",
-    r"\brespond now\b", r"\btime sensitive\b", r"\bverify now\b", r"\bact now\b",
-    r"\bimportant notice\b"
+    r"\burgent\b",
+    r"\bimmediately\b",
+    r"\basap\b",
+    r"\bright now\b",
+    r"\bwithin \d+ (hours?|days?)\b",
+    r"\baction required\b",
+    r"\bfinal notice\b",
+    r"\brespond now\b",
+    r"\btime sensitive\b",
+    r"\bverify now\b",
+    r"\bact now\b",
+    r"\bimportant notice\b",
 ]
 
 PAYMENT_PATTERNS = [
-    r"\bpayment\b", r"\bpay\b", r"\btransfer\b", r"\bbank transfer\b",
-    r"\bwire\b", r"\bremittance\b", r"\binvoice\b", r"\bdeposit\b",
-    r"\bbsb\b", r"\baccount number\b", r"\bpayid\b", r"\bgift card\b",
-    r"\bsettlement\b", r"\boverdue\b", r"\bsend me money\b"
+    r"\bpayment\b",
+    r"\bpay\b",
+    r"\btransfer\b",
+    r"\bbank transfer\b",
+    r"\bwire\b",
+    r"\bremittance\b",
+    r"\binvoice\b",
+    r"\bdeposit\b",
+    r"\bbsb\b",
+    r"\baccount number\b",
+    r"\bpayid\b",
+    r"\bgift card\b",
+    r"\bsettlement\b",
+    r"\boverdue\b",
+    r"\bsend me money\b",
 ]
 
 CREDENTIAL_PATTERNS = [
-    r"\bpassword\b", r"\blogin\b", r"\bsign in\b", r"\bverification code\b",
-    r"\bpin code\b", r"\b2fa\b", r"\bmfa\b", r"\bone-time code\b",
-    r"\botp\b", r"\bconfirm your account\b", r"\bverify your identity\b",
-    r"\bsecurity alert\b"
+    r"\bpassword\b",
+    r"\blogin\b",
+    r"\bsign in\b",
+    r"\bverification code\b",
+    r"\bpin code\b",
+    r"\b2fa\b",
+    r"\bmfa\b",
+    r"\bone-time code\b",
+    r"\botp\b",
+    r"\bconfirm your account\b",
+    r"\bverify your identity\b",
+    r"\bsecurity alert\b",
 ]
 
 PROMOTION_PATTERNS = [
-    r"promo code", r"prize", r"reward", r"bonus", r"\bwon\b", r"winner",
-    r"winner id", r"claim now", r"congratulations", r"free", r"giveaway",
-    r"new notification"
+    r"promo code",
+    r"prize",
+    r"reward",
+    r"bonus",
+    r"\bwon\b",
+    r"winner",
+    r"winner id",
+    r"claim now",
+    r"congratulations",
+    r"free",
+    r"giveaway",
+    r"new notification",
 ]
 
 SENSITIVE_INFO_PATTERNS = [
-    r"\bdriver'?s licence\b", r"\bpassport\b", r"\bmedicare\b",
-    r"\bdate of birth\b", r"\bdob\b", r"\bpersonal information\b",
-    r"\bidentity\b", r"\baccount information\b"
+    r"\bdriver'?s licence\b",
+    r"\bpassport\b",
+    r"\bmedicare\b",
+    r"\bdate of birth\b",
+    r"\bdob\b",
+    r"\bpersonal information\b",
+    r"\bidentity\b",
+    r"\baccount information\b",
 ]
 
 GENERIC_GREETING_PATTERNS = [
-    r"\bdear customer\b", r"\bdear user\b", r"\bhello customer\b",
-    r"\bvalued customer\b"
+    r"\bdear customer\b",
+    r"\bdear user\b",
+    r"\bhello customer\b",
+    r"\bvalued customer\b",
 ]
 
-SUSPICIOUS_TLDS = {".ru", ".cn", ".top", ".xyz", ".click", ".shop", ".info", ".biz"}
+SUSPICIOUS_TLDS = {
+    ".ru", ".cn", ".top", ".xyz", ".click", ".shop", ".info", ".biz"
+}
 
 
 def _safe_lower(value):
-    """Convert a string to lowercase and strip whitespace."""
     return (value or "").strip().lower()
 
 
 def _extract_email_address(from_header):
-    """Extract the email address from the From header."""
     if not from_header:
         return ""
     match = re.search(r"<([^>]+)>", from_header)
@@ -83,19 +139,20 @@ def _extract_email_address(from_header):
 
 
 def _extract_display_name(from_header):
-    """Extract the display name from the From header."""
     if not from_header:
         return ""
-    return from_header.split("<", 1)[0].strip().strip('"').strip() if "<" in from_header else ""
+    if "<" in from_header:
+        return from_header.split("<", 1)[0].strip().strip('"').strip()
+    return ""
 
 
 def _extract_domain_from_email(email_address):
-    """Extract domain from an email address."""
-    return email_address.split("@", 1)[1].strip().lower() if "@" in email_address else ""
+    if "@" not in (email_address or ""):
+        return ""
+    return email_address.split("@", 1)[1].strip().lower()
 
 
 def _extract_urls(text):
-    """Extract URLs from a given text."""
     if not text:
         return []
     raw_urls = re.findall(r'https?://[^\s<>"\']+', text, flags=re.I)
@@ -103,7 +160,6 @@ def _extract_urls(text):
 
 
 def _get_domain_from_url(url):
-    """Extract domain from a URL."""
     try:
         parsed = urlparse(url)
         domain = (parsed.netloc or "").lower().strip()
@@ -115,76 +171,120 @@ def _get_domain_from_url(url):
 
 
 def _matches_any_pattern(text, patterns):
-    """Check if any of the patterns match the given text."""
     lowered = _safe_lower(text)
-    return any(re.search(pattern, lowered, flags=re.I) for pattern in patterns)
+    for pattern in patterns:
+        if re.search(pattern, lowered, flags=re.I):
+            return True
+    return False
 
 
 def _find_brand_mentions(text):
-    """Find mentions of known brands in the text."""
     lowered = _safe_lower(text)
-    return [brand for brand in KNOWN_BRANDS if re.search(rf"\b{re.escape(brand)}\b", lowered)]
+    matches = []
+    for brand in KNOWN_BRANDS.keys():
+        if re.search(rf"\b{re.escape(brand)}\b", lowered):
+            matches.append(brand)
+    return matches
 
 
 def _domain_matches_brand(domain, brand):
-    """Check if a domain matches the known brand domains."""
     if not domain or brand not in KNOWN_BRANDS:
         return False
-    return any(domain == allowed or domain.endswith("." + allowed) for allowed in KNOWN_BRANDS[brand])
+    allowed_domains = KNOWN_BRANDS[brand]
+    return any(domain == allowed or domain.endswith("." + allowed) for allowed in allowed_domains)
 
 
 def _looks_like_suspicious_sender_format(email_address):
-    """Determine if the sender email format looks suspicious."""
     if not email_address:
         return True
 
     local_part = email_address.split("@", 1)[0]
-    return (
-        len(local_part) > 35
-        or re.search(r"\d{5,}", local_part)
-        or re.search(r"[._-]{3,}", local_part)
-    )
+    if len(local_part) > 35:
+        return True
+
+    if re.search(r"\d{5,}", local_part):
+        return True
+
+    if re.search(r"[._-]{3,}", local_part):
+        return True
+
+    return False
 
 
 def _looks_like_deceptive_domain(domain):
-    """Check if the domain appears suspicious or deceptive."""
     if not domain:
         return False
 
+    if any(domain.endswith(tld) for tld in SUSPICIOUS_TLDS):
+        return True
+
     deceptive_keywords = [
-        "secure-login", "verify-now", "account-update", "wallet-verify", "auth-check",
+        "secure-login",
+        "verify-now",
+        "account-update",
+        "wallet-verify",
+        "auth-check",
     ]
-    return any(domain.endswith(tld) for tld in SUSPICIOUS_TLDS) or any(keyword in domain for keyword in deceptive_keywords)
+    return any(keyword in domain for keyword in deceptive_keywords)
 
 
 def _build_signals(from_header, subject, body):
-    """Build signals based on the email components."""
     combined_text = f"{subject or ''}\n{body or ''}".strip()
+
     sender_email = _extract_email_address(from_header)
     sender_domain = _extract_domain_from_email(sender_email)
     display_name = _extract_display_name(from_header)
+
     urls = _extract_urls(body or "")
-    url_domains = [_get_domain_from_url(url) for url in urls]
+    url_domains = []
+    for url in urls:
+        domain = _get_domain_from_url(url)
+        if domain:
+            url_domains.append(domain)
 
     brand_mentions = _find_brand_mentions(combined_text)
 
-    sender_brand_aligned = any(
-        sender_domain and _domain_matches_brand(sender_domain, brand)
-        for brand in brand_mentions
-    )
-    any_link_brand_aligned = any(
-        any(_domain_matches_brand(link_domain, brand) for brand in brand_mentions)
-        for link_domain in url_domains
-    )
-    has_brand_domain_mismatch = any(
-        sender_domain and not _domain_matches_brand(sender_domain, brand)
-        for brand in brand_mentions
-    )
+    sender_brand_aligned = False
+    any_link_brand_aligned = False
+    has_brand_domain_mismatch = False
 
-    suspicious_link_domains = [domain for domain in url_domains if _looks_like_deceptive_domain(domain)]
+    if brand_mentions:
+        for brand in brand_mentions:
+            if sender_domain and _domain_matches_brand(sender_domain, brand):
+                sender_brand_aligned = True
+            if any(_domain_matches_brand(link_domain, brand) for link_domain in url_domains):
+                any_link_brand_aligned = True
+
+        for brand in brand_mentions:
+            brand_sender_mismatch = sender_domain and not _domain_matches_brand(sender_domain, brand)
+            brand_link_mismatch = bool(url_domains) and any(
+                not _domain_matches_brand(link_domain, brand) for link_domain in url_domains
+            )
+
+            if brand_sender_mismatch or brand_link_mismatch:
+                if not (sender_brand_aligned or any_link_brand_aligned):
+                    has_brand_domain_mismatch = True
+                    break
+
+    suspicious_link_domains = []
+    for domain in url_domains:
+        if _looks_like_deceptive_domain(domain):
+            suspicious_link_domains.append(domain)
+
     mass_recipient_count = (body or "").count("@")
+
     account_reference = bool(
         re.search(r"\b(account|wallet|notification|security|message)\b", _safe_lower(combined_text))
+    )
+
+    payment_request = _matches_any_pattern(combined_text, PAYMENT_PATTERNS)
+    credential_request = _matches_any_pattern(combined_text, CREDENTIAL_PATTERNS)
+    promotion = _matches_any_pattern(combined_text, PROMOTION_PATTERNS)
+
+    trusted_brand_notification = bool(brand_mentions) and (
+        (sender_brand_aligned or any_link_brand_aligned)
+        and not has_brand_domain_mismatch
+        and len(suspicious_link_domains) == 0
     )
 
     signals = {
@@ -194,31 +294,26 @@ def _build_signals(from_header, subject, body):
         "urls": urls,
         "url_domains": url_domains,
         "brand_mentions": brand_mentions,
-        "has_links": bool(urls),
+        "has_links": len(urls) > 0,
         "unverified_sender": not bool(sender_email),
         "free_email_provider": sender_domain in FREE_EMAIL_PROVIDERS if sender_domain else False,
         "suspicious_sender_format": _looks_like_suspicious_sender_format(sender_email),
         "sender_brand_aligned": sender_brand_aligned,
         "any_link_brand_aligned": any_link_brand_aligned,
-        "has_brand_domain_mismatch": has_brand_domain_mismatch,
+        "trusted_brand_alignment": bool(brand_mentions) and (sender_brand_aligned or any_link_brand_aligned),
+        "trusted_brand_notification": trusted_brand_notification,
         "domain_mismatch": has_brand_domain_mismatch,
-        "trusted_brand_alignment": bool(sender_brand_aligned or any_link_brand_aligned),
-        "trusted_brand_notification": (
-            bool(brand_mentions)
-            and (sender_brand_aligned or any_link_brand_aligned)
-            and not has_brand_domain_mismatch
-            and not suspicious_link_domains
-        ),
         "urgency": _matches_any_pattern(combined_text, URGENCY_PATTERNS),
-        "payment_request": _matches_any_pattern(combined_text, PAYMENT_PATTERNS),
-        "credential_request": _matches_any_pattern(combined_text, CREDENTIAL_PATTERNS),
-        "promotion": _matches_any_pattern(combined_text, PROMOTION_PATTERNS),
+        "payment_request": payment_request,
+        "credential_request": credential_request,
+        "promotion": promotion,
         "sensitive_info_request": _matches_any_pattern(combined_text, SENSITIVE_INFO_PATTERNS),
         "generic_greeting": _matches_any_pattern(combined_text, GENERIC_GREETING_PATTERNS),
         "mass_recipients": mass_recipient_count >= 3,
-        "deceptive_link_domain": bool(suspicious_link_domains),
-        "suspicious_link": bool(suspicious_link_domains) or (
-            has_brand_domain_mismatch and not (sender_brand_aligned or any_link_brand_aligned)
+        "deceptive_link_domain": len(suspicious_link_domains) > 0,
+        "suspicious_link": (
+            len(suspicious_link_domains) > 0
+            or (has_brand_domain_mismatch and not (sender_brand_aligned or any_link_brand_aligned))
         ),
         "account_reference": account_reference,
         "gift_card_language": bool(re.search(r"\bgift card\b", _safe_lower(combined_text))),
@@ -228,7 +323,6 @@ def _build_signals(from_header, subject, body):
 
 
 def _base_score_from_signals(signals):
-    """Calculate the base score from the signals."""
     score = 0
     findings = []
 
@@ -284,7 +378,6 @@ def _base_score_from_signals(signals):
 
 
 def _apply_combination_rules(signals, score, findings):
-    """Apply combination rules to adjust the score based on multiple signals."""
     if signals["urgency"] and signals["promotion"]:
         score += 12
         findings.append("Urgency combined with promotional language increases caution.")
@@ -335,6 +428,7 @@ def _apply_combination_rules(signals, score, findings):
         score -= 18
         findings.append("This appears to be an account or security notification from an aligned branded domain.")
 
+    # Promotional override
     if signals["promotion"] and not (
         signals["payment_request"]
         or signals["credential_request"]
@@ -344,6 +438,7 @@ def _apply_combination_rules(signals, score, findings):
         score = min(score, 25)
         findings.append("The message appears to be general promotional or marketing communication.")
 
+    # Trusted branded account/security notification cap
     if (
         signals["trusted_brand_notification"]
         and signals["credential_request"]
@@ -359,7 +454,7 @@ def _apply_combination_rules(signals, score, findings):
 
 
 def _apply_risk_floors(signals, score):
-    """Apply risk floors based on specific signals."""
+    # Skip floors for clean promotional emails
     if signals["promotion"] and not (
         signals["payment_request"]
         or signals["credential_request"]
@@ -368,6 +463,7 @@ def _apply_risk_floors(signals, score):
     ):
         return min(score, 30)
 
+    # Soften credential floor for aligned branded notifications
     if not (
         signals["trusted_brand_notification"]
         and signals["credential_request"]
@@ -394,7 +490,6 @@ def _apply_risk_floors(signals, score):
 
 
 def _risk_rating_from_score(score):
-    """Determine the risk rating based on the score."""
     if score >= 70:
         return "High Risk"
     if score >= 30:
@@ -404,14 +499,17 @@ def _risk_rating_from_score(score):
 
 def score_attachment_signals(attachment_signals):
     """
-    Assess the risk of attachments based on specific signals.
+    Optional helper for future use.
     Safe to call with an empty dict.
-    Returns a small isolated score package for modular attachment logic.
+    Returns a small isolated score package so attachment logic can stay modular.
     """
     attachment_signals = attachment_signals or {}
+
     score = 0
     reasons = []
-    floor_flags = {"prevent_low_risk": False}
+    floor_flags = {
+        "prevent_low_risk": False,
+    }
 
     if attachment_signals.get("attachment_present"):
         score += 3
@@ -479,7 +577,12 @@ def score_attachment_signals(attachment_signals):
     ):
         floor_flags["prevent_low_risk"] = True
 
-    unique_reasons = list(set(reasons))
+    seen = set()
+    unique_reasons = []
+    for reason in reasons:
+        if reason not in seen:
+            unique_reasons.append(reason)
+            seen.add(reason)
 
     return {
         "score": min(max(score, 0), 100),
@@ -489,14 +592,18 @@ def score_attachment_signals(attachment_signals):
 
 
 def assess_email_risk(from_header, subject, body):
-    """Assess the risk of an email based on various signals."""
     signals = _build_signals(from_header, subject, body)
 
     score, findings = _base_score_from_signals(signals)
     score, findings = _apply_combination_rules(signals, score, findings)
     score = _apply_risk_floors(signals, score)
 
-    unique_findings = list(set(findings))
+    seen = set()
+    unique_findings = []
+    for finding in findings:
+        if finding not in seen:
+            unique_findings.append(finding)
+            seen.add(finding)
 
     return {
         "score": score,
