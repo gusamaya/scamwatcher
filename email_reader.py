@@ -1,6 +1,7 @@
 import base64
 import imaplib
 import email
+import email.message
 import os
 import re
 from email.header import decode_header
@@ -74,6 +75,65 @@ def is_internal_service_email(sender_email: str, subject: str, body: str, is_for
         return False
 
     return local_part.startswith(INTERNAL_SERVICE_LOCAL_PARTS)
+
+
+# Phrases a person typically writes when they paste a suspicious email into a
+# new message (instead of forwarding it) and ask us to check it.
+USER_REQUEST_PHRASES = (
+    "is this a scam",
+    "is this legit",
+    "is this legitimate",
+    "is this real",
+    "is this genuine",
+    "is this safe",
+    "is this spam",
+    "can you check",
+    "could you check",
+    "please check",
+    "pls check",
+    "please review",
+    "can you review",
+    "could you review",
+    "can you have a look",
+    "please have a look",
+    "what do you think of this",
+    "i received this",
+    "i got this",
+    "received this email",
+    "got this email",
+    "got this message",
+    "received this message",
+)
+
+FORWARD_SUBJECT_PREFIX = re.compile(r"^\s*(fwd?|fw)\s*:", re.IGNORECASE)
+
+
+def looks_like_user_request(subject: str, body: str) -> bool:
+    text = f"{subject or ''} {body or ''}".lower()
+    text = re.sub(r"\s+", " ", text)
+    return any(phrase in text for phrase in USER_REQUEST_PHRASES)
+
+
+def find_attached_email(message):
+    """Return the first email attached as a file (Outlook "Forward as
+    attachment", or a dragged-in .eml), or None."""
+    for part in message.walk():
+        if part.get_content_type() == "message/rfc822":
+            payload = part.get_payload()
+            if isinstance(payload, list) and payload:
+                return payload[0]
+            if isinstance(payload, email.message.Message):
+                return payload
+
+        filename = (part.get_filename() or "").lower()
+        if filename.endswith(".eml"):
+            try:
+                data = part.get_payload(decode=True)
+                if data:
+                    return email.message_from_bytes(data)
+            except Exception:
+                continue
+    return None
 
 
 def decode_mime_header(value: str) -> str:
@@ -422,6 +482,27 @@ def get_unread_emails() -> List[Dict]:
             forwarded_by = raw_from
 
             is_forwarded, forwarded_data = extract_forwarded_email_details(body)
+            forward_method = "inline" if is_forwarded else ""
+
+            attached_email = find_attached_email(message)
+            if attached_email is not None:
+                # The real suspicious email is the attachment; review that instead.
+                inner_from = decode_mime_header(attached_email.get("From", ""))
+                inner_subject = decode_mime_header(attached_email.get("Subject", ""))
+                inner_body = extract_email_body(attached_email)
+                (
+                    has_attachments,
+                    attachment_names,
+                    attachments,
+                    attachment_text,
+                ) = extract_attachments(attached_email)
+                is_forwarded = True
+                forward_method = "attachment"
+                forwarded_data = {
+                    "from_header": inner_from,
+                    "subject": inner_subject,
+                    "body": inner_body,
+                }
 
             if is_forwarded:
                 original_from = forwarded_data.get("from_header", "").strip()
@@ -444,6 +525,23 @@ def get_unread_emails() -> List[Dict]:
 
                 if original_body:
                     parsed_body = original_body
+
+            # Who sent this to us?
+            #   "forwarded" - a person forwarded or pasted in an email to check.
+            #                 They are the submitter and should get a reply.
+            #   "direct"    - the email itself was sent straight to our address
+            #                 (spam, phishing, newsletters). The sender is NOT a
+            #                 user, so we must not reply to them.
+            if is_forwarded:
+                submission_type = "forwarded"
+            elif FORWARD_SUBJECT_PREFIX.match(subject or ""):
+                submission_type = "forwarded"
+                forward_method = "subject"
+            elif looks_like_user_request(subject, body):
+                submission_type = "forwarded"
+                forward_method = "pasted"
+            else:
+                submission_type = "direct"
 
             internal_email = is_internal_service_email(
                 sender_email=sender_email,
@@ -472,6 +570,8 @@ def get_unread_emails() -> List[Dict]:
                     "attachment_text": attachment_text,
                     "forwarded_by": forwarded_by,
                     "is_forwarded": is_forwarded,
+                    "submission_type": submission_type,
+                    "forward_method": forward_method,
                     "original_forward_wrapper_subject": subject,
                     "is_internal": internal_email,
                     "exclude_from_calibration": internal_email,

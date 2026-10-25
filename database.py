@@ -38,6 +38,8 @@ def ensure_columns():
         "response_error": "TEXT",
         "last_send_attempt_at": "TEXT",
         "send_attempts": "INTEGER DEFAULT 0",
+        "submission_type": "TEXT",
+        "forward_method": "TEXT",
     }
 
     for column_name, column_type in required_columns.items():
@@ -194,6 +196,8 @@ def insert_submission(
     has_attachments=0,
     attachment_names=None,
     attachment_signals=None,
+    submission_type=None,
+    forward_method=None,
     **kwargs,
 ):
     if (not from_header) and kwargs.get("sender"):
@@ -205,6 +209,10 @@ def insert_submission(
     attachment_names_json = _normalise_list_json(attachment_names)
     attachment_signals_json = _normalise_dict_json(attachment_signals)
     has_attachments_int = 1 if has_attachments else 0
+
+    # Emails sent straight to our address (not forwarded by a person) are held:
+    # the "sender" is usually the scammer, so we must never reply automatically.
+    response_status = "held" if submission_type == "direct" else "draft"
 
     conn = get_connection()
     cursor = conn.cursor()
@@ -240,9 +248,11 @@ def insert_submission(
             attachment_signals,
             response_error,
             last_send_attempt_at,
-            send_attempts
+            send_attempts,
+            submission_type,
+            forward_method
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         message_id,
         received_at,
@@ -260,7 +270,7 @@ def insert_submission(
         1 if should_reply else 0,
         confidence_label,
         confidence_reason,
-        "draft",
+        response_status,
         None,
         None,
         0,
@@ -274,6 +284,8 @@ def insert_submission(
         None,
         None,
         0,
+        submission_type,
+        forward_method,
     ))
 
     conn.commit()

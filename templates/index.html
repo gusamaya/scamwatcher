@@ -332,6 +332,12 @@
             border-color: #fecaca;
         }
 
+        .status-held {
+            background: #f3f4f6;
+            color: #374151;
+            border-color: #d1d5db;
+        }
+
         .badge {
             display: inline-flex;
             align-items: center;
@@ -587,6 +593,10 @@
                    class="filter-pill {% if active_filter == 'sent' %}active{% endif %}">
                     Sent
                 </a>
+                <a href="{{ url_for('dashboard', filter='direct') }}"
+                   class="filter-pill {% if active_filter == 'direct' %}active{% endif %}">
+                    Sent Directly
+                </a>
                 <a href="{{ url_for('dashboard', filter='failed') }}"
                    class="filter-pill {% if active_filter == 'failed' %}active{% endif %}">
                     Failed
@@ -667,6 +677,8 @@
                                                 <span class="status-pill status-sending">Sending</span>
                                             {% elif response_status == 'failed' %}
                                                 <span class="status-pill status-failed">Failed</span>
+                                            {% elif response_status == 'held' %}
+                                                <span class="status-pill status-held">Not replied</span>
                                             {% else %}
                                                 <span class="status-pill status-draft">Pending</span>
                                             {% endif %}
@@ -705,9 +717,13 @@
                                                 {% if submission.send_attempts %}<br>Attempts: {{ submission.send_attempts }}{% endif %}
                                                 {% if submission.response_error %}<br>Error: {{ submission.response_error }}{% endif %}
                                             </div>
+                                        {% elif response_status == 'held' %}
+                                            <div class="meta-small">
+                                                Sent directly to ScamWatcher, not forwarded by a user. No reply sent.
+                                            </div>
                                         {% else %}
                                             <div class="meta-small">
-                                                Awaiting auto-send
+                                                {% if auto_send_enabled %}Awaiting auto-send{% else %}Awaiting approval{% endif %}
                                                 {% if submission.send_attempts %}<br>Attempts: {{ submission.send_attempts }}{% endif %}
                                             </div>
                                         {% endif %}

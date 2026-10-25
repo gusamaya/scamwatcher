@@ -255,6 +255,12 @@
             border-color: #fecaca;
         }
 
+        .status-held {
+            background: #f3f4f6;
+            color: #374151;
+            border-color: #d1d5db;
+        }
+
         .status-review-unreviewed {
             background: #f1f5f9;
             color: #475569;
@@ -811,9 +817,12 @@
     {% elif response_status == 'failed' %}
         {% set delivery_note_class = 'failed' %}
         {% set delivery_note_text = 'Response delivery failed' %}
+    {% elif response_status == 'held' %}
+        {% set delivery_note_class = 'failed' %}
+        {% set delivery_note_text = 'Not replied: this email was sent directly to ScamWatcher, not forwarded by a user. The sender is likely the scammer.' %}
     {% else %}
         {% set delivery_note_class = 'pending' %}
-        {% set delivery_note_text = 'Response is awaiting auto-send' %}
+        {% set delivery_note_text = 'Response is awaiting auto-send' if auto_send_enabled else 'Response is awaiting your approval' %}
     {% endif %}
 
     {% if review_status == 'correct' %}
@@ -830,6 +839,19 @@
     {% set divider = '----------------------------------------------------------------------------------------------------------------' %}
 
     <div class="page">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                <div style="margin-bottom:16px;">
+                    {% for category, message in messages %}
+                        <div style="padding:12px 14px; border-radius:10px; margin-bottom:8px; font-size:14px;
+                                    {% if category == 'error' %}background:#fef2f2; color:#991b1b; border:1px solid #fecaca;
+                                    {% else %}background:#ecfdf5; color:#166534; border:1px solid #bbf7d0;{% endif %}">
+                            {{ message }}
+                        </div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        {% endwith %}
         <div class="hero">
             <div class="hero-left">
                 <div class="logo-tile">
@@ -875,6 +897,8 @@
                             <span class="status-pill status-sending">Sending</span>
                         {% elif response_status == 'failed' %}
                             <span class="status-pill status-failed">Failed</span>
+                        {% elif response_status == 'held' %}
+                            <span class="status-pill status-held">Not replied</span>
                         {% else %}
                             <span class="status-pill status-draft">Pending</span>
                         {% endif %}
@@ -1032,6 +1056,13 @@
                     {% elif response_status == 'sending' %}
                         <button class="btn" name="action" value="approve_send" disabled>
                             Sending...
+                        </button>
+                    {% elif response_status == 'held' %}
+                        <p class="helper-text">This email came straight to ScamWatcher rather than from a user, so the reply would go to the original sender, who is likely the scammer. Only send if you have confirmed the sender is a real user.</p>
+                        <input type="hidden" name="confirm_direct" value="yes">
+                        <button class="btn" name="action" value="approve_send"
+                                onclick="return confirm('This would reply to the original sender, who may be the scammer. Send anyway?');">
+                            Send Anyway
                         </button>
                     {% else %}
                         <button class="btn" name="action" value="approve_send">

@@ -319,6 +319,8 @@ def ensure_schema():
         "response_error": "TEXT",
         "last_send_attempt_at": "TEXT",
         "send_attempts": "INTEGER DEFAULT 0",
+        "submission_type": "TEXT",
+        "forward_method": "TEXT",
     }
 
     for column_name, column_type in required_columns.items():
@@ -812,6 +814,10 @@ def get_pending_auto_send_ids(limit=25):
           AND COALESCE(response_status, 'draft') IN ('draft', 'failed')
           AND COALESCE(proposed_response, '') <> ''
           AND COALESCE(send_attempts, 0) < ?
+          -- Only ever auto-reply to people who forwarded an email to us. Direct
+          -- emails (and older records saved before this was tracked) need a
+          -- person to click "Approve and Send".
+          AND submission_type = 'forwarded'
         ORDER BY datetime(received_at) ASC, id ASC
         LIMIT ?
         """,
@@ -921,6 +927,8 @@ def get_submissions(filter_value):
         query += " AND LOWER(COALESCE(response_status, 'draft'))='failed'"
     elif filter_value == "pending":
         query += " AND LOWER(COALESCE(response_status, 'draft')) IN ('draft', 'sending')"
+    elif filter_value == "direct":
+        query += " AND (submission_type = 'direct' OR LOWER(COALESCE(response_status, '')) = 'held')"
 
     query += " ORDER BY datetime(received_at) DESC, id DESC"
 
@@ -956,6 +964,7 @@ def get_csrf_token():
 
 
 app.jinja_env.globals["csrf_token"] = get_csrf_token
+app.jinja_env.globals["auto_send_enabled"] = AUTO_SEND_ENABLED
 
 
 def _credentials_valid(username, password):
@@ -1063,6 +1072,10 @@ def submission_detail(submission_id):
         action = (request.form.get("action") or "").strip().lower()
 
         if action == "approve_send":
+            is_held = (submission.get("response_status") or "").lower() == "held"
+            if is_held and request.form.get("confirm_direct") != "yes":
+                flash("This email was sent directly to ScamWatcher. Confirm before replying.", "error")
+                return redirect(url_for("submission_detail", submission_id=submission_id))
             success, message = send_submission_response(submission_id, manual=True)
             flash(message, "success" if success else "error")
             return redirect(url_for("submission_detail", submission_id=submission_id))

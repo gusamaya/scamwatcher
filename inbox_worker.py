@@ -269,6 +269,8 @@ def _insert_submission_flexible(insert_submission, email_record, clean):
         "submitter_name": email_record["raw"].get("submitter_name"),
         "submitter_email": email_record["raw"].get("submitter_email"),
         "submitter_from_header": email_record["raw"].get("submitter_from_header"),
+        "submission_type": email_record["raw"].get("submission_type"),
+        "forward_method": email_record["raw"].get("forward_method"),
         "risk_score": clean["risk_score"],
         "risk_rating": clean["risk_rating"],
         "summary": clean["summary"],
@@ -487,6 +489,7 @@ def main():
                         f"[{_now()}] Processed: {message_id} | "
                         f"sender={email_record['sender']} | "
                         f"from_header={email_record['from_header']} | "
+                        f"type={item.get('submission_type')} | "
                         f"attachments={email_record['has_attachments']} | "
                         f"attachment_names={email_record['attachment_names']} | "
                         f"{clean['risk_rating']} ({clean['risk_score']})"
