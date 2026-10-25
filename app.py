@@ -5,6 +5,7 @@ import re
 import secrets
 import smtplib
 import sqlite3
+import sys
 import threading
 import time
 from datetime import datetime
@@ -14,6 +15,14 @@ from flask import Flask, render_template, request, redirect, url_for, abort, fla
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# Write log lines immediately. Without this, output from background threads can
+# sit in a buffer and never appear in the hosting provider's logs.
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+    sys.stderr.reconfigure(line_buffering=True)
+except Exception:
+    pass
 
 DB_NAME = os.getenv("DB_PATH", "/var/data/scamwatcher.db")
 AUDIT_BCC_EMAIL = "scamwatcher.audit@gmail.com"
@@ -1004,6 +1013,12 @@ def get_submissions(filter_value):
 
 
 ensure_schema()
+
+# Start the inbox checker and auto-sender as soon as the app loads, so emails
+# are processed even if nobody has opened the dashboard since the last deploy.
+# (Under the Flask debug reloader, only the child process starts them.)
+if os.environ.get("WERKZEUG_RUN_MAIN") == "true" or not os.environ.get("FLASK_DEBUG"):
+    start_background_threads()
 
 
 # ------------------------------------------------------------------

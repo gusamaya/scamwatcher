@@ -32,7 +32,8 @@ def connect_imap():
     if not EMAIL_ADDRESS or not EMAIL_PASSWORD:
         raise ValueError("EMAIL_ADDRESS and EMAIL_PASSWORD must be set.")
 
-    mail = imaplib.IMAP4_SSL(IMAP_SERVER, IMAP_PORT)
+    # Timeout so a stalled connection cannot freeze the inbox checker forever.
+    mail = imaplib.IMAP4_SSL(IMAP_SERVER, IMAP_PORT, timeout=30)
     mail.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
     return mail
 

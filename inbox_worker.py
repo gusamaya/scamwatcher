@@ -1,5 +1,6 @@
 import inspect
 import json
+import sys
 import time
 from datetime import datetime
 
@@ -30,6 +31,10 @@ def _safe_str(value):
     if value is None:
         return ""
     return str(value)
+
+
+def _log(message):
+    print(f"[InboxWorker] {message}", flush=True)
 
 
 def _now():
@@ -448,12 +453,18 @@ def main():
         init_db()
         print(f"[{_now()}] Database initialised.")
 
+    _log(f"Checking the inbox every {POLL_INTERVAL_SECONDS} seconds.")
+    last_heartbeat = 0
+
     while True:
         try:
             unread = fetch_unread_emails() or []
 
             if unread:
-                print(f"[{_now()}] Found {len(unread)} unread email(s).")
+                _log(f"Found {len(unread)} unread email(s).")
+            elif time.time() - last_heartbeat > 600:
+                _log("Inbox checked: no unread emails.")
+                last_heartbeat = time.time()
 
             for item in unread:
                 try:
@@ -496,7 +507,7 @@ def main():
                         print(f"[{_now()}] Failed to mark as read: {exc}")
 
                     print(
-                        f"[{_now()}] Processed: {message_id} | "
+                        f"[InboxWorker] Processed: {message_id} | "
                         f"sender={email_record['sender']} | "
                         f"from_header={email_record['from_header']} | "
                         f"type={item.get('submission_type')} | "
@@ -515,7 +526,7 @@ def main():
                     attempts = _failed_attempts.get(key, 0) + 1
                     _failed_attempts[key] = attempts
                     print(
-                        f"[{_now()}] Error processing one email "
+                        f"[InboxWorker] Error processing one email "
                         f"(attempt {attempts}/{MAX_PROCESSING_ATTEMPTS}): {email_error}"
                     )
 
@@ -528,7 +539,7 @@ def main():
                         _failed_attempts.pop(key, None)
 
         except Exception as loop_error:
-            print(f"[{_now()}] Worker loop error: {loop_error}")
+            _log(f"Could not check the inbox: {type(loop_error).__name__}: {loop_error}")
 
         time.sleep(POLL_INTERVAL_SECONDS)
 
