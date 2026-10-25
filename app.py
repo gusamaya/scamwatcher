@@ -321,6 +321,9 @@ def ensure_schema():
         "send_attempts": "INTEGER DEFAULT 0",
         "submission_type": "TEXT",
         "forward_method": "TEXT",
+        "review_checks": "TEXT",
+        "scam_type": "TEXT",
+        "scam_category": "TEXT",
     }
 
     for column_name, column_type in required_columns.items():
@@ -341,6 +344,12 @@ def prepare_submission_record(data):
     data["has_attachments"] = int(data.get("has_attachments") or 0)
     data["attachment_names"] = normalize_attachment_names(data.get("attachment_names"))
     data["attachment_signals"] = normalize_attachment_signals(data.get("attachment_signals"))
+
+    try:
+        checks = json.loads(data.get("review_checks") or "[]")
+        data["review_checks"] = checks if isinstance(checks, list) else []
+    except Exception:
+        data["review_checks"] = []
 
     if data["attachment_names"]:
         data["has_attachments"] = 1
@@ -514,7 +523,10 @@ def build_html_email(submission):
         guidance_strong = "No immediate action is required. If this message is not relevant, it can be safely ignored."
         guidance = "If you are considering engaging, ensure any response or action is appropriate for your situation."
     elif "high" in risk.lower():
-        guidance_strong = "Do not open or act on this attachment unless independently verified."
+        if attachment_lines:
+            guidance_strong = "Do not open the attachment, click any links, or act on this email unless it has been independently verified."
+        else:
+            guidance_strong = "Do not click any links, reply, or act on this email unless it has been independently verified."
         guidance = "Verify any request using contact details sourced independently from the email, and do not rely on any attachment without verification."
     else:
         guidance_strong = "We recommend not taking action until this request has been independently verified."
@@ -527,6 +539,46 @@ def build_html_email(submission):
     attachment_names = submission.get("attachment_names") or []
 
     divider = "-" * 112
+
+    status_styles = {
+        "fail": ("Warning", "#fef2f2", "#991b1b", "#fecaca"),
+        "caution": ("Caution", "#fffbeb", "#92400e", "#fde68a"),
+        "pass": ("OK", "#f0fdf4", "#166534", "#bbf7d0"),
+        "info": ("Info", "#eff6ff", "#1d4ed8", "#bfdbfe"),
+    }
+    check_rows = ""
+    for check in submission.get("review_checks") or []:
+        label, bg, fg, border = status_styles.get(check.get("status"), status_styles["info"])
+        check_rows += f"""
+                <tr>
+                    <td valign="top" style="padding:8px 10px 8px 0; font-weight:700; color:#111827; white-space:nowrap;">{html_escape(check.get("title"))}</td>
+                    <td valign="top" style="padding:8px 10px;"><span style="display:inline-block; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:700; background:{bg}; color:{fg}; border:1px solid {border};">{label}</span></td>
+                    <td valign="top" style="padding:8px 0; color:#111827;">{html_escape(check.get("headline"))}</td>
+                </tr>"""
+    checks_box = ""
+    if check_rows:
+        checks_box = f"""
+            <div style="font-size:14px; font-weight:700; color:#111827; margin-bottom:6px;">How we checked it:</div>
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse; margin:0 0 22px 0; font-size:14px; line-height:1.5;">
+                {check_rows}
+            </table>
+        """
+
+    tip_box = ""
+    for check in submission.get("review_checks") or []:
+        if check.get("key") == "known_scams" and check.get("status") in ("fail", "caution") and check.get("details"):
+            tip_box = f"""
+            <div style="background:#eff6ff; border:1px solid #bfdbfe; border-radius:10px; padding:12px 14px; margin:0 0 22px 0; color:#1e3a8a; font-size:14px; line-height:1.6;">
+                <strong>Tip:</strong> {html_escape(check["details"][-1])}
+            </div>
+            """
+
+    scam_type_box = ""
+    if submission.get("scam_type"):
+        scam_type_box = f"""
+            <div style="font-size:14px; font-weight:700; color:#111827; margin-bottom:4px;">Likely scam type:</div>
+            <div style="font-size:14px; color:#991b1b; font-weight:700; margin-bottom:14px;">{html_escape(submission.get("scam_type"))}</div>
+        """
 
     original_attachment_block = ""
     if attachment_names:
@@ -567,12 +619,16 @@ def build_html_email(submission):
                 {html_escape(risk)}.
             </div>
 
+            {scam_type_box}
+
             <div style="font-size:14px; font-weight:700; color:#111827; margin-bottom:4px;">
                 Recommended Action:
             </div>
             <div style="font-size:14px; font-weight:700; color:#0f4c8a; margin-bottom:28px;">
                 {html_escape(action)}
             </div>
+
+            {checks_box}
 
             <div style="font-size:14px; font-weight:700; color:#111827; margin-bottom:8px;">
                 What ScamWatcher observed:
@@ -582,6 +638,8 @@ def build_html_email(submission):
             </ul>
 
             {attachment_box}
+
+            {tip_box}
 
             <div style="font-size:14px; line-height:1.7; font-weight:700; font-style:italic; color:#111827; margin-bottom:12px;">
                 {html_escape(guidance_strong)}

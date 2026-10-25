@@ -968,6 +968,41 @@
                 <p>{{ submission.human_summary or submission.summary or "No summary available." }}</p>
             </div>
 
+            {% set status_style = {
+                'fail':    {'label': 'Warning', 'bg': '#fef2f2', 'fg': '#991b1b', 'border': '#fecaca'},
+                'caution': {'label': 'Caution', 'bg': '#fffbeb', 'fg': '#92400e', 'border': '#fde68a'},
+                'pass':    {'label': 'OK',      'bg': '#f0fdf4', 'fg': '#166534', 'border': '#bbf7d0'},
+                'info':    {'label': 'Info',    'bg': '#eff6ff', 'fg': '#1d4ed8', 'border': '#bfdbfe'}
+            } %}
+
+            <h2>Review Breakdown</h2>
+            {% if submission.scam_type %}
+                <div style="display:inline-block; margin:0 0 12px; padding:6px 12px; border-radius:999px; background:#fef2f2; color:#991b1b; border:1px solid #fecaca; font-size:13px; font-weight:700;">
+                    Likely scam type: {{ submission.scam_type }}
+                </div>
+            {% endif %}
+            {% if submission.review_checks %}
+                <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(260px, 1fr)); gap:12px; margin-bottom:24px;">
+                    {% for check in submission.review_checks %}
+                        {% set st = status_style.get(check.status, status_style['info']) %}
+                        <div style="border:1px solid {{ st.border }}; background:#ffffff; border-radius:12px; padding:14px 16px;">
+                            <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:6px;">
+                                <strong style="font-size:15px;">{{ loop.index }}. {{ check.title }}</strong>
+                                <span style="padding:3px 10px; border-radius:999px; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; background:{{ st.bg }}; color:{{ st.fg }}; border:1px solid {{ st.border }};">{{ st.label }}</span>
+                            </div>
+                            <p style="margin:0 0 8px; font-weight:600; color:#111827;">{{ check.headline }}</p>
+                            {% if check.details %}
+                                <ul style="margin:0; padding-left:18px; color:#374151; font-size:13px; line-height:1.55;">
+                                    {% for d in check.details %}<li style="overflow-wrap:anywhere;">{{ d }}</li>{% endfor %}
+                                </ul>
+                            {% endif %}
+                        </div>
+                    {% endfor %}
+                </div>
+            {% else %}
+                <div class="card"><p>This submission was reviewed before the four-part breakdown was added.</p></div>
+            {% endif %}
+
             <h2>Recommended Action</h2>
             <div class="recommended">
                 {{ submission.recommended_action or "No recommended action available." }}
@@ -1105,6 +1140,27 @@
                         <div class="preview-label">Recommended Action:</div>
                         <p class="preview-action">{{ submission.recommended_action or "No recommended action available." }}</p>
                     </div>
+
+                    {% if submission.scam_type %}
+                        <div class="preview-section">
+                            <div class="preview-label">Likely scam type:</div>
+                            <p class="preview-action">{{ submission.scam_type }}</p>
+                        </div>
+                    {% endif %}
+
+                    {% if submission.review_checks %}
+                        <div class="preview-observed-title">How we checked it:</div>
+                        <table role="presentation" style="width:100%; border-collapse:collapse; margin:0 0 18px;">
+                            {% for check in submission.review_checks %}
+                                {% set st = status_style.get(check.status, status_style['info']) %}
+                                <tr>
+                                    <td style="padding:8px 10px 8px 0; vertical-align:top; white-space:nowrap; font-weight:700;">{{ check.title }}</td>
+                                    <td style="padding:8px 10px; vertical-align:top;"><span style="padding:2px 8px; border-radius:999px; font-size:11px; font-weight:700; background:{{ st.bg }}; color:{{ st.fg }}; border:1px solid {{ st.border }};">{{ st.label }}</span></td>
+                                    <td style="padding:8px 0; vertical-align:top;">{{ check.headline }}</td>
+                                </tr>
+                            {% endfor %}
+                        </table>
+                    {% endif %}
 
                     <div class="preview-observed-title">What ScamWatcher observed:</div>
                     <ul class="preview-observed-list">

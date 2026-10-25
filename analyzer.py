@@ -5,6 +5,7 @@ import re
 from urllib.parse import urlparse
 
 from scoring_model import assess_email_risk, KNOWN_BRANDS, _domain_matches_brand
+from review_checks import run_review
 
 # Names people see in a From line for each brand in scoring_model.KNOWN_BRANDS.
 BRAND_NAME_ALIASES = {
@@ -224,6 +225,19 @@ def build_response(submission):
 
     findings_block = "\n".join(bullet_lines)
 
+    status_words = {"fail": "WARNING", "caution": "CAUTION", "pass": "OK", "info": "INFO"}
+    check_lines = []
+    for check in submission.get("review_checks") or []:
+        check_lines.append(f"{check.get('title')}: {status_words.get(check.get('status'), '')} - {check.get('headline')}")
+    checks_block = ""
+    if check_lines:
+        checks_block = "How we checked it:\n" + "\n".join(f"• {line}" for line in check_lines) + "\n\n"
+
+    scam_line = ""
+    if submission.get("scam_type"):
+        scam_line = f"Likely scam type: {submission.get('scam_type')}\n\n"
+    advice_line = f"{submission.get('scam_advice')}\n\n" if submission.get("scam_advice") else ""
+
     risk_lower = (submission.get("risk_rating") or "").lower()
     if "high" in risk_lower:
         guidance = (
@@ -249,13 +263,13 @@ Thanks for submitting this email to ScamWatcher.
 
 Assessment result: {submission.get("risk_rating")}.
 
-Recommended Action
+{scam_line}Recommended Action
 {submission.get("recommended_action")}
 
-What ScamWatcher observed:
+{checks_block}What ScamWatcher observed:
 {findings_block}
 
-{guidance}
+{advice_line}{guidance}
 
 Regards,
 
@@ -1606,6 +1620,53 @@ def analyze_email(submission):
     if attachment_signals.get("invoice_like_document") and attachment_signals.get("attachment_identity_mismatch"):
         risk_score = max(risk_score, 80)
 
+    # ------------------------------------------------------------
+    # Structured four-part review: sender, content, links, known scams.
+    # Its score floor is applied last, so no earlier discount (e.g. the
+    # marketing caps above) can undo a clear failure in any check.
+    # ------------------------------------------------------------
+    review_attachment_text = (
+        (pdf_extract.get("pdf_text") or "") if attachment_detected else ""
+    ) or get_attachment_text_from_submission(submission)
+
+    try:
+        review = run_review(
+            from_header=from_header,
+            subject=subject,
+            body=body,
+            reply_to=submission.get("reply_to", ""),
+            html_links=submission.get("html_links") or [],
+            auth_results=submission.get("auth_results") or {},
+            attachment_text=review_attachment_text,
+            submission_type=submission.get("submission_type", ""),
+        )
+    except Exception as exc:  # never let the extra review break the main one
+        print(f"[Review] Structured review failed: {exc}")
+        review = {"checks": [], "score_floor": 0, "scam_type": "", "scam_category": "", "advice": ""}
+
+    if review["score_floor"] > risk_score:
+        risk_score = review["score_floor"]
+
+    # When none of the four checks failed, the older keyword scoring above
+    # should not be able to label the email High Risk on its own (it was
+    # flagging genuine bank, Google and courier emails). Its strongest signals
+    # still count, so those cases keep their score.
+    older_engine_strong_evidence = any([
+        strong_attachment_risk,
+        info_request_detected,
+        advance_fee_detected,
+        unexpected_reward_detected,
+        body_mismatch and gmail_body_contact,
+    ])
+    if review.get("checks") and review.get("fail_count", 0) == 0 and not older_engine_strong_evidence:
+        if review.get("effective_caution_count", 0) == 0:
+            if risk_score > 35:
+                risk_score = 35
+                # Keep the explanation consistent with the result.
+                findings = [c["headline"] for c in review["checks"]]
+        elif risk_score > 70:
+            risk_score = 70
+
     risk_score = max(0, min(100, risk_score))
 
     if risk_score >= 75:
@@ -1675,7 +1736,14 @@ def analyze_email(submission):
         "has_attachments": attachment_detected,
         "attachment_names": attachment_names,
         "attachment_signals": attachment_signals,
+        "review_checks": review.get("checks", []),
+        "scam_type": review.get("scam_type", ""),
+        "scam_category": review.get("scam_category", ""),
+        "scam_advice": review.get("advice", ""),
         "proposed_response": build_response({
+            "review_checks": review.get("checks", []),
+            "scam_type": review.get("scam_type", ""),
+            "scam_advice": review.get("advice", ""),
             "from_header": from_header,
             "risk_rating": risk_rating,
             "recommended_action": recommended_action,

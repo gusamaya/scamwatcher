@@ -8,6 +8,18 @@ A lightweight MVP that reviews an email submission, assigns a simple scam risk s
 - returns a risk rating, findings, recommended actions, and a reply email draft
 - includes a generic inbound webhook endpoint you can connect to an email forwarding provider later
 
+## How an email is reviewed
+Every submission gets four checks (in `review_checks.py`), each marked OK, Caution or Warning:
+
+1. **Sender & domain**: does the sender's domain belong to the organisation it claims to be (display name, lookalike domains such as `paypa1.com` or `auspost-redelivery.top`, free email accounts, Reply-To, and SPF/DKIM/DMARC when available)?
+2. **Content**: what is it asking for (payment, sign-in, personal details, gift cards or crypto, changed bank details) and does it use pressure (urgency, threats, secrecy)?
+3. **Links**: where links really go, including hidden "Click here" buttons, Outlook Safe Links, shorteners, IP addresses, lookalike or free-hosting sites, and file downloads.
+4. **Known scams**: matches against common Australian scam campaigns (tolls, parcels, ATO/myGov, bank alerts, invoice redirection, subscriptions and more), and names the likely scam type.
+
+A Warning in any check sets a minimum risk level. If all four pass, the email cannot be rated High Risk by keyword scoring alone.
+
+**Keeping it current:** add new brands and their official domains to `BRANDS`, and new scam campaigns to `SCAM_PATTERNS`, in `review_checks.py`. Add confirmed scam domains to `BLOCKED_DOMAINS` in `trust_lists.py`.
+
 ## Intended use
 This is a **validation MVP**, not a production-grade detection engine. It is designed to help you test:
 - whether people will forward suspicious emails

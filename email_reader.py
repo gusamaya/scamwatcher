@@ -2,6 +2,7 @@ import base64
 import imaplib
 import email
 import email.message
+from html.parser import HTMLParser
 import os
 import re
 from email.header import decode_header
@@ -134,6 +135,92 @@ def find_attached_email(message):
             except Exception:
                 continue
     return None
+
+
+class _LinkCollector(HTMLParser):
+    """Collects <a href> links with their visible text."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.links = []
+        self._href = None
+        self._text = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag.lower() == "a":
+            href = dict(attrs).get("href") or ""
+            self._href = href.strip()
+            self._text = []
+
+    def handle_data(self, data):
+        if self._href is not None:
+            self._text.append(data)
+
+    def handle_endtag(self, tag):
+        if tag.lower() == "a" and self._href is not None:
+            text = re.sub(r"\s+", " ", "".join(self._text)).strip()
+            if self._href.lower().startswith(("http://", "https://", "www.")):
+                self.links.append({"text": text[:200], "url": self._href[:2000]})
+            self._href = None
+            self._text = []
+
+
+def extract_html_links(message) -> List[Dict]:
+    """Return every web link in the email's HTML, with the text shown to the
+    reader. Plain-text conversion drops these, so a "Click here" button would
+    otherwise never be checked."""
+    links = []
+    seen = set()
+
+    for part in message.walk():
+        if part.get_content_type() != "text/html":
+            continue
+        if "attachment" in str(part.get("Content-Disposition", "")).lower():
+            continue
+        try:
+            payload = part.get_payload(decode=True)
+            if not payload:
+                continue
+            html = payload.decode(part.get_content_charset() or "utf-8", errors="replace")
+            collector = _LinkCollector()
+            collector.feed(html)
+            for link in collector.links:
+                key = (link["url"], link["text"])
+                if key not in seen:
+                    seen.add(key)
+                    links.append(link)
+        except Exception:
+            continue
+
+    return links[:100]
+
+
+def extract_auth_results(message) -> Dict[str, str]:
+    """Read SPF / DKIM / DMARC results added by the receiving mail server.
+
+    Only meaningful for the email as it originally arrived: either sent
+    directly to us, or attached as a file (which keeps the original headers).
+    An inline forward loses them.
+    """
+    results = {}
+    headers = message.get_all("Authentication-Results") or []
+    headers += message.get_all("ARC-Authentication-Results") or []
+
+    for header in headers:
+        text = str(header).lower()
+        for method in ("spf", "dkim", "dmarc"):
+            if method in results:
+                continue
+            match = re.search(rf"\b{method}=(\w+)", text)
+            if match:
+                results[method] = match.group(1)
+
+    if "spf" not in results:
+        received_spf = str(message.get("Received-SPF", "")).lower().strip()
+        if received_spf:
+            results["spf"] = received_spf.split()[0]
+
+    return results
 
 
 def decode_mime_header(value: str) -> str:
@@ -484,6 +571,9 @@ def get_unread_emails() -> List[Dict]:
             is_forwarded, forwarded_data = extract_forwarded_email_details(body)
             forward_method = "inline" if is_forwarded else ""
 
+            html_links = extract_html_links(message)
+            auth_results = extract_auth_results(message)
+
             attached_email = find_attached_email(message)
             if attached_email is not None:
                 # The real suspicious email is the attachment; review that instead.
@@ -496,6 +586,9 @@ def get_unread_emails() -> List[Dict]:
                     attachments,
                     attachment_text,
                 ) = extract_attachments(attached_email)
+                html_links = extract_html_links(attached_email)
+                auth_results = extract_auth_results(attached_email)
+                reply_to_header = decode_mime_header(attached_email.get("Reply-To", ""))
                 is_forwarded = True
                 forward_method = "attachment"
                 forwarded_data = {
@@ -543,6 +636,13 @@ def get_unread_emails() -> List[Dict]:
             else:
                 submission_type = "direct"
 
+            if submission_type == "forwarded" and forward_method != "attachment":
+                # Auth headers and Reply-To belong to the user's own email, not
+                # the scam. Only a direct email or an attached .eml keeps the
+                # original sender's headers.
+                auth_results = {}
+                reply_to_header = ""
+
             internal_email = is_internal_service_email(
                 sender_email=sender_email,
                 subject=parsed_subject,
@@ -572,6 +672,8 @@ def get_unread_emails() -> List[Dict]:
                     "is_forwarded": is_forwarded,
                     "submission_type": submission_type,
                     "forward_method": forward_method,
+                    "html_links": html_links,
+                    "auth_results": auth_results,
                     "original_forward_wrapper_subject": subject,
                     "is_internal": internal_email,
                     "exclude_from_calibration": internal_email,

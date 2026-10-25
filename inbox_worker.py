@@ -169,6 +169,9 @@ def _analyse_email(analyze_email, email_record):
         "attachments": email_record["attachments"],
         "attachment_text": email_record["attachment_text"],
         "raw_email": email_record["raw"],
+        "html_links": email_record["raw"].get("html_links") or [],
+        "auth_results": email_record["raw"].get("auth_results") or {},
+        "submission_type": email_record["raw"].get("submission_type") or "",
     }
 
     try:
@@ -229,6 +232,7 @@ def _normalise_analysis_result(result):
     confidence_label = result.get("confidence_label") or ""
     confidence_reason = result.get("confidence_reason") or ""
     attachment_signals = result.get("attachment_signals") or {}
+    review_checks = result.get("review_checks") or []
 
     try:
         risk_score = int(risk_score)
@@ -255,6 +259,9 @@ def _normalise_analysis_result(result):
         "confidence_label": _safe_str(confidence_label),
         "confidence_reason": _safe_str(confidence_reason),
         "attachment_signals": attachment_signals,
+        "review_checks": review_checks,
+        "scam_type": _safe_str(result.get("scam_type") or ""),
+        "scam_category": _safe_str(result.get("scam_category") or ""),
     }
 
 
@@ -285,6 +292,9 @@ def _insert_submission_flexible(insert_submission, email_record, clean):
         "has_attachments": int(bool(email_record["has_attachments"])),
         "attachment_names": json.dumps(email_record["attachment_names"]),
         "attachment_signals": json.dumps(clean.get("attachment_signals", {})),
+        "review_checks": json.dumps(clean.get("review_checks", [])),
+        "scam_type": clean.get("scam_type", ""),
+        "scam_category": clean.get("scam_category", ""),
     }
 
     try:
