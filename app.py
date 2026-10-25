@@ -945,7 +945,12 @@ def start_auto_send_thread():
 def start_inbox_worker_thread():
     global _inbox_worker_thread_started
 
-    if _inbox_worker_thread_started or not INBOX_WORKER_ENABLED:
+    if _inbox_worker_thread_started:
+        return
+
+    if not INBOX_WORKER_ENABLED:
+        print("[InboxWorker] Not started: INBOX_WORKER_ENABLED is set to false, so this service will not check the inbox.", flush=True)
+        _inbox_worker_thread_started = True  # only log once
         return
 
     try:
