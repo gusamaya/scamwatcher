@@ -4,7 +4,60 @@ import json
 import re
 from urllib.parse import urlparse
 
-from scoring_model import assess_email_risk
+from scoring_model import assess_email_risk, KNOWN_BRANDS, _domain_matches_brand
+
+# Names people see in a From line for each brand in scoring_model.KNOWN_BRANDS.
+BRAND_NAME_ALIASES = {
+    "auspost": ["australia post", "auspost", "aus post"],
+    "ato": ["australian taxation office", "ato"],
+    "mygov": ["mygov", "my gov"],
+    "telstra": ["telstra"],
+    "paypal": ["paypal"],
+    "microsoft": ["microsoft", "office 365", "microsoft 365", "outlook"],
+}
+
+DISPLAY_FILLER_WORDS = {
+    "support", "team", "billing", "security", "account", "accounts", "service",
+    "services", "notification", "notifications", "noreply", "no", "reply",
+    "customer", "care", "help", "alert", "alerts", "official", "australia",
+    "au", "online", "delivery", "admin", "info", "update", "updates", "the",
+}
+
+
+def _domain_tokens(domain):
+    return set(t for t in re.split(r"[.\-]", (domain or "").lower()) if t)
+
+
+def _display_claims_brand(display_name, aliases):
+    text = re.sub(r"[^a-z0-9 ]", " ", (display_name or "").lower())
+    text = " " + re.sub(r"\s+", " ", text).strip() + " "
+    for alias in aliases:
+        if f" {alias} " in text:
+            remainder = text.replace(f" {alias} ", " ").split()
+            if all(word in DISPLAY_FILLER_WORDS for word in remainder):
+                return True
+    return False
+
+
+def detect_lookalike_brand(display_name, sender_domain, url_domains):
+    """Return the brand being imitated, or "" if none.
+
+    Flags a sender or link that presents itself as a known brand (by display
+    name or by putting the brand inside the domain, e.g. telstra-billing-au.net)
+    while not actually using that brand's real domain.
+    """
+    for brand in KNOWN_BRANDS:
+        aliases = BRAND_NAME_ALIASES.get(brand, [brand])
+
+        if sender_domain and not _domain_matches_brand(sender_domain, brand):
+            if brand in _domain_tokens(sender_domain) or _display_claims_brand(display_name, aliases):
+                return brand
+
+        for link_domain in url_domains or []:
+            if brand in _domain_tokens(link_domain) and not _domain_matches_brand(link_domain, brand):
+                return brand
+
+    return ""
 
 try:
     from PyPDF2 import PdfReader
@@ -171,6 +224,25 @@ def build_response(submission):
 
     findings_block = "\n".join(bullet_lines)
 
+    risk_lower = (submission.get("risk_rating") or "").lower()
+    if "high" in risk_lower:
+        guidance = (
+            "Do not reply, click any links, open any attachments, or make any payment based on this email.\n\n"
+            "If you think it might be genuine, contact the organisation using contact details you find yourself "
+            "(for example, their official website or the number on your card or bill), not details from the email."
+        )
+    elif "low" in risk_lower:
+        guidance = (
+            "No strong scam indicators were found. If this message is not relevant, it can be ignored.\n\n"
+            "Before opening attachments or acting on any request, it is still worth checking it is what you expect."
+        )
+    else:
+        guidance = (
+            "We recommend not acting on this email until you have verified it independently.\n\n"
+            "Contact the organisation using contact details you find yourself, not details from the email, "
+            "and do not rely on any attachment until it has been verified."
+        )
+
     response = f"""Hi,
 
 Thanks for submitting this email to ScamWatcher.
@@ -183,9 +255,7 @@ Recommended Action
 What ScamWatcher observed:
 {findings_block}
 
-No immediate action is required. If this message is not relevant, it can be safely ignored.
-
-If you are considering engaging, ensure any response or action is appropriate for your situation.
+{guidance}
 
 Regards,
 
@@ -1169,6 +1239,28 @@ def analyze_email(submission):
     if sender_domain and any(sender_domain.endswith(tld) for tld in suspicious_tld_keywords):
         suspicious_tld_detected = True
 
+    lookalike_brand = detect_lookalike_brand(
+        signals.get("display_name") or display_name,
+        sender_domain,
+        signals.get("url_domains") or [],
+    )
+    lookalike_brand_detected = bool(lookalike_brand)
+
+    if lookalike_brand_detected:
+        findings.append(
+            f"The sender or a link presents itself as {lookalike_brand.title()} but does not use its official domain."
+        )
+        risk_score = max(risk_score, 85)
+
+    # Evidence that the email is pretending to be someone it is not. When this is
+    # present, marketing-style wording (footers, "unsubscribe", "contact us") must
+    # never be used to lower the score, because scammers copy real brand footers.
+    deception_evidence = any([
+        lookalike_brand_detected,
+        signals.get("deceptive_link_domain"),
+        suspicious_tld_detected,
+    ])
+
     strong_attachment_risk = any([
         attachment_signals.get("updated_payment_details_present"),
         attachment_signals.get("sensitive_info_request_present"),
@@ -1318,6 +1410,7 @@ def analyze_email(submission):
     )
 
     dangerous_evidence = any([
+        deception_evidence,
         signals.get("payment_request"),
         signals.get("credential_request"),
         info_request_detected,
@@ -1355,6 +1448,7 @@ def analyze_email(submission):
         and not large_value_detected
         and not advance_fee_detected
         and not strong_attachment_risk
+        and not deception_evidence
         and not attachment_signals.get("payment_instructions_present")
         and not attachment_signals.get("updated_payment_details_present")
         and not attachment_signals.get("sensitive_info_request_present")
@@ -1428,6 +1522,7 @@ def analyze_email(submission):
             marketing_signal_count += 1
 
     strict_dangerous_evidence = any([
+        deception_evidence,
         signals.get("payment_request"),
         signals.get("credential_request"),
         info_request_detected,

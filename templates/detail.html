@@ -924,6 +924,7 @@
                 </div>
 
                 <form method="POST">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <div class="button-row">
                         <button class="btn btn-secondary" name="action" value="mark_correct">
                             Appears Correct
@@ -1023,6 +1024,7 @@
             <h2>Response Workflow</h2>
             <div class="workflow-box">
                 <form method="POST">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     {% if response_status == 'sent' %}
                         <button class="btn" name="action" value="approve_send" disabled>
                             Already Sent

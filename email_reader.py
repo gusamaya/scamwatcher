@@ -35,54 +35,45 @@ def connect_imap():
     return mail
 
 
+# Only Google's own system senders count as "internal". Ordinary gmail.com /
+# googlemail.com addresses are real people submitting emails and must never be
+# skipped.
+INTERNAL_SERVICE_DOMAINS = {
+    "google.com",
+    "accounts.google.com",
+    "workspace.google.com",
+    "notifications.google.com",
+}
+
+INTERNAL_SERVICE_LOCAL_PARTS = (
+    "no-reply",
+    "noreply",
+    "workspace-noreply",
+    "accounts-noreply",
+    "mail-noreply",
+    "calendar-notification",
+)
+
+
 def is_internal_service_email(sender_email: str, subject: str, body: str, is_forwarded: bool) -> bool:
+    """True only for notifications sent by Google itself to this mailbox.
+
+    Matches on the exact sender domain (not a substring, so "google.com.evil.ru"
+    or "notgoogle.com" do not match) and on a no-reply style local part.
+    """
     if is_forwarded:
         return False
 
-    sender_email = (sender_email or "").lower()
-    subject_lower = (subject or "").lower()
-    body_lower = (body or "").lower()
+    sender_email = (sender_email or "").strip().lower()
+    if "@" not in sender_email:
+        return False
 
-    trusted_service_domains = [
-        "google.com",
-        "gmail.com",
-        "googlemail.com",
-        "workspace.google.com",
-        "accounts.google.com",
-        "notifications.google.com",
-    ]
+    local_part, domain = sender_email.rsplit("@", 1)
 
-    trusted_sender_fragments = [
-        "no-reply@",
-        "noreply@",
-        "workspace-noreply@",
-        "accounts-noreply@",
-    ]
+    if domain not in INTERNAL_SERVICE_DOMAINS:
+        return False
 
-    service_keywords = [
-        "account",
-        "security",
-        "notification",
-        "alert",
-        "billing",
-        "invoice",
-        "subscription",
-        "storage",
-        "policy",
-        "terms",
-        "update",
-        "workspace",
-        "google",
-        "payment",
-        "admin",
-    ]
-
-    domain_match = any(d in sender_email for d in trusted_service_domains) or any(
-        fragment in sender_email for fragment in trusted_sender_fragments
-    )
-    keyword_match = any(k in subject_lower or k in body_lower for k in service_keywords)
-
-    return domain_match and keyword_match
+    return local_part.startswith(INTERNAL_SERVICE_LOCAL_PARTS)
 
 
 def decode_mime_header(value: str) -> str:
@@ -394,7 +385,7 @@ def get_unread_emails() -> List[Dict]:
         for uid in uid_list:
             uid_str = uid.decode()
 
-            status, msg_data = mail.uid("fetch", uid, "(RFC822)")
+            status, msg_data = mail.uid("fetch", uid, "(BODY.PEEK[])")
             if status != "OK" or not msg_data or msg_data[0] is None:
                 continue
 
@@ -523,4 +514,4 @@ def mark_email_as_read(imap_uid: str) -> bool:
         mail.logout()
 
 
-fetch_unread_emails = get_unread_emails
+fetch_unread_emails = get_unread_emails

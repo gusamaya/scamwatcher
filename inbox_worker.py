@@ -6,6 +6,12 @@ from datetime import datetime
 
 POLL_INTERVAL_SECONDS = 30
 
+# Emails are fetched without being marked read, so one that fails is retried on
+# the next poll. After this many failures it is marked read so a single broken
+# email cannot block or spam the logs forever.
+MAX_PROCESSING_ATTEMPTS = 3
+_failed_attempts = {}
+
 
 def _import_module(module_name: str):
     module = __import__(module_name)
@@ -487,7 +493,26 @@ def main():
                     )
 
                 except Exception as email_error:
-                    print(f"[{_now()}] Error processing one email: {email_error}")
+                    key = ""
+                    try:
+                        key = email_record["message_id"] or email_record["uid"]
+                    except Exception:
+                        pass
+
+                    attempts = _failed_attempts.get(key, 0) + 1
+                    _failed_attempts[key] = attempts
+                    print(
+                        f"[{_now()}] Error processing one email "
+                        f"(attempt {attempts}/{MAX_PROCESSING_ATTEMPTS}): {email_error}"
+                    )
+
+                    if key and attempts >= MAX_PROCESSING_ATTEMPTS:
+                        print(f"[{_now()}] Giving up on {key}; marking as read. Review it manually in the inbox.")
+                        try:
+                            _mark_as_read(mark_email_as_read, email_record)
+                        except Exception as exc:
+                            print(f"[{_now()}] Failed to mark failed email as read: {exc}")
+                        _failed_attempts.pop(key, None)
 
         except Exception as loop_error:
             print(f"[{_now()}] Worker loop error: {loop_error}")

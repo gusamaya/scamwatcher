@@ -1,6 +1,8 @@
+import hmac
 import json
 import os
 import re
+import secrets
 import smtplib
 import sqlite3
 import threading
@@ -8,7 +10,7 @@ import time
 from datetime import datetime
 from email.message import EmailMessage
 
-from flask import Flask, render_template, request, redirect, url_for, abort, flash
+from flask import Flask, render_template, request, redirect, url_for, abort, flash, session
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -16,13 +18,37 @@ load_dotenv()
 DB_NAME = os.getenv("DB_PATH", "/var/data/scamwatcher.db")
 AUDIT_BCC_EMAIL = "scamwatcher.audit@gmail.com"
 
-AUTO_SEND_ENABLED = os.getenv("AUTO_SEND_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+# Off by default: replies wait in the dashboard until an admin clicks
+# "Approve & send". Set AUTO_SEND_ENABLED=true only once you trust the scoring.
+AUTO_SEND_ENABLED = os.getenv("AUTO_SEND_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
 AUTO_SEND_INTERVAL_SECONDS = int(os.getenv("AUTO_SEND_INTERVAL_SECONDS", "15"))
+MAX_SEND_ATTEMPTS = int(os.getenv("MAX_SEND_ATTEMPTS", "3"))
+# A submission left in "sending" this long (e.g. the server restarted mid-send)
+# is treated as failed so it can be retried or reviewed.
+STUCK_SENDING_MINUTES = int(os.getenv("STUCK_SENDING_MINUTES", "10"))
 
 INBOX_WORKER_ENABLED = os.getenv("INBOX_WORKER_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
 
+# Dashboard login. Set ADMIN_PASSWORD (and optionally ADMIN_USERNAME) in your
+# environment. If ADMIN_PASSWORD is missing the dashboard refuses all logins.
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
+
 app = Flask(__name__)
-app.secret_key = os.getenv("SECRET_KEY", "scamwatcher-secret")
+
+_secret_key = os.getenv("SECRET_KEY", "").strip()
+if not _secret_key:
+    # A random key keeps sessions secure, but everyone is logged out whenever the
+    # server restarts. Set SECRET_KEY in your environment to avoid that.
+    _secret_key = secrets.token_hex(32)
+    print("[Security] SECRET_KEY is not set; using a temporary random key.")
+app.secret_key = _secret_key
+
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=os.getenv("SESSION_COOKIE_SECURE", "true").strip().lower() in {"1", "true", "yes", "on"},
+)
 
 _auto_send_thread_started = False
 _inbox_worker_thread_started = False
@@ -785,18 +811,37 @@ def get_pending_auto_send_ids(limit=25):
           AND COALESCE(exclude_from_calibration, 0) = 0
           AND COALESCE(response_status, 'draft') IN ('draft', 'failed')
           AND COALESCE(proposed_response, '') <> ''
+          AND COALESCE(send_attempts, 0) < ?
         ORDER BY datetime(received_at) ASC, id ASC
         LIMIT ?
         """,
-        (limit,),
+        (MAX_SEND_ATTEMPTS, limit),
     ).fetchall()
     conn.close()
     return [row["id"] for row in rows]
 
 
+def release_stuck_sending():
+    conn = get_connection()
+    conn.execute(
+        """
+        UPDATE submissions
+        SET response_status = 'failed',
+            response_error = 'Send was interrupted (server restart or crash). Check before resending.'
+        WHERE response_status = 'sending'
+          AND datetime(last_send_attempt_at) < datetime('now', ?)
+        """,
+        (f"-{STUCK_SENDING_MINUTES} minutes",),
+    )
+    conn.commit()
+    conn.close()
+
+
 def auto_send_pending_submissions():
     if not AUTO_SEND_ENABLED:
         return
+
+    release_stuck_sending()
 
     pending_ids = get_pending_auto_send_ids(limit=25)
     for submission_id in pending_ids:
@@ -895,7 +940,107 @@ def get_submissions(filter_value):
 ensure_schema()
 
 
+# ------------------------------------------------------------------
+# Login and CSRF protection
+# ------------------------------------------------------------------
+
+PUBLIC_ENDPOINTS = {"login", "static"}
+
+
+def get_csrf_token():
+    token = session.get("csrf_token")
+    if not token:
+        token = secrets.token_urlsafe(32)
+        session["csrf_token"] = token
+    return token
+
+
+app.jinja_env.globals["csrf_token"] = get_csrf_token
+
+
+def _credentials_valid(username, password):
+    if not ADMIN_PASSWORD:
+        return False
+    user_ok = hmac.compare_digest((username or "").encode(), ADMIN_USERNAME.encode())
+    pass_ok = hmac.compare_digest((password or "").encode(), ADMIN_PASSWORD.encode())
+    return user_ok and pass_ok
+
+
 @app.before_request
+def require_login_and_csrf():
+    # Start the inbox/send workers on the first request of any kind, including
+    # logged-out visits and health checks, before any redirect can skip it.
+    warm_background_threads()
+
+    if request.method == "POST":
+        sent_token = request.form.get("csrf_token", "")
+        expected = session.get("csrf_token", "")
+        if not expected or not hmac.compare_digest(sent_token, expected):
+            abort(400, "Your session expired or the form was invalid. Please go back and try again.")
+
+    if request.endpoint in PUBLIC_ENDPOINTS:
+        return None
+
+    if not session.get("logged_in"):
+        return redirect(url_for("login", next=request.path))
+
+    return None
+
+
+@app.after_request
+def add_security_headers(response):
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("Referrer-Policy", "same-origin")
+    return response
+
+
+_failed_logins = {}
+_failed_logins_lock = threading.Lock()
+MAX_LOGIN_FAILURES = 5
+LOGIN_LOCKOUT_SECONDS = 15 * 60
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    error = None
+    client = request.headers.get("X-Forwarded-For", request.remote_addr or "").split(",")[0].strip()
+
+    if not ADMIN_PASSWORD:
+        error = "Login is disabled because ADMIN_PASSWORD is not set on the server."
+
+    elif request.method == "POST":
+        with _failed_logins_lock:
+            count, first = _failed_logins.get(client, (0, time.time()))
+            if time.time() - first > LOGIN_LOCKOUT_SECONDS:
+                count, first = 0, time.time()
+
+        if count >= MAX_LOGIN_FAILURES:
+            error = "Too many failed attempts. Please wait 15 minutes and try again."
+        elif _credentials_valid(request.form.get("username"), request.form.get("password")):
+            with _failed_logins_lock:
+                _failed_logins.pop(client, None)
+            session.clear()
+            session["logged_in"] = True
+            get_csrf_token()
+            next_path = request.args.get("next") or ""
+            if not next_path.startswith("/") or next_path.startswith("//"):
+                next_path = url_for("dashboard")
+            return redirect(next_path)
+        else:
+            with _failed_logins_lock:
+                _failed_logins[client] = (count + 1, first)
+            error = "Incorrect username or password."
+
+    return render_template("login.html", error=error)
+
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
+
 def warm_background_threads():
     if os.environ.get("WERKZEUG_RUN_MAIN") == "true" or not app.debug:
         start_background_threads()
@@ -945,4 +1090,8 @@ def submission_detail(submission_id):
 if __name__ == "__main__":
     start_background_threads()
     port = int(os.environ.get("PORT", "5000"))
-    app.run(host="0.0.0.0", port=port, debug=True)
+    # Debug mode exposes an interactive console that can run code, so it is only
+    # enabled when explicitly requested for local development.
+    debug = os.environ.get("FLASK_DEBUG", "").strip().lower() in {"1", "true", "yes", "on"}
+    host = "127.0.0.1" if debug else "0.0.0.0"
+    app.run(host=host, port=port, debug=debug)
