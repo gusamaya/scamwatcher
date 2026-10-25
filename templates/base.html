@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en-AU">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Submissions{% endblock %} · ScamWatcher</title>
+    <link rel="icon" href="{{ url_for('static', filename='logo.png') }}">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+</head>
+<body>
+{% macro nav(key, label, alert=False) -%}
+    <a class="nav-link" href="{{ url_for('dashboard', filter=key) }}"{% if active_filter == key %} aria-current="page"{% endif %}>
+        <span>{{ label }}</span>
+        {% set n = (counts or {}).get(key) %}
+        {% if n is not none %}
+            <span class="nav-count{% if alert and n %} is-alert{% endif %}">{{ n }}</span>
+        {% endif %}
+    </a>
+{%- endmacro %}
+
+<div class="shell">
+    <aside class="sidebar">
+        <a class="brand" href="{{ url_for('dashboard') }}">
+            <img src="{{ url_for('static', filename='logo.png') }}" alt="">
+            <span>
+                <span class="brand-name">ScamWatcher</span>
+                <span class="brand-sub">Advisory dashboard</span>
+            </span>
+        </a>
+
+        <nav aria-label="Submission views">
+            <div class="nav-group">
+                <p class="nav-heading">Replies</p>
+                {{ nav('pending', 'Needs approval' if not auto_send_enabled else 'Waiting to send', alert=True) }}
+                {{ nav('failed', 'Failed to send', alert=True) }}
+                {{ nav('sent', 'Sent') }}
+                {{ nav('direct', 'Sent directly (no reply)') }}
+                {{ nav('all', 'All submissions') }}
+            </div>
+            <div class="nav-group">
+                <p class="nav-heading">Risk</p>
+                {{ nav('high', 'High risk') }}
+                {{ nav('attention', 'Needs attention') }}
+                {{ nav('low', 'Low risk') }}
+            </div>
+        </nav>
+
+        <div class="sidebar-foot">
+            <p class="mode-note">{% if auto_send_enabled %}Replies send automatically{% else %}Replies wait for your approval{% endif %}</p>
+            <a href="{{ url_for('logout') }}">Sign out</a>
+        </div>
+    </aside>
+
+    <main class="main" id="main">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% for category, message in messages %}
+                <div class="flash flash-{{ category }}" role="status">{{ message }}</div>
+            {% endfor %}
+        {% endwith %}
+
+        {% block content %}{% endblock %}
+    </main>
+</div>
+
+<script>
+    // Show stored UTC times in the viewer's own time zone.
+    (function () {
+        function parse(value) {
+            if (!value) return null;
+            var d = new Date(value.trim().replace(" ", "T") + "Z");
+            return isNaN(d.getTime()) ? null : d;
+        }
+        function time(d) {
+            return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }).toLowerCase();
+        }
+        function day(d) {
+            var today = new Date();
+            var yesterday = new Date(); yesterday.setDate(today.getDate() - 1);
+            if (d.toDateString() === today.toDateString()) return "Today";
+            if (d.toDateString() === yesterday.toDateString()) return "Yesterday";
+            var opts = { day: "numeric", month: "short" };
+            if (d.getFullYear() !== today.getFullYear()) opts.year = "numeric";
+            return d.toLocaleDateString(undefined, opts);
+        }
+        document.querySelectorAll("[data-utc]").forEach(function (el) {
+            var d = parse(el.getAttribute("data-utc"));
+            if (!d) return;
+            el.setAttribute("title", d.toLocaleString());
+            if (el.dataset.format === "split") {
+                el.innerHTML = "";
+                el.appendChild(document.createTextNode(day(d)));
+                var sub = document.createElement("span");
+                sub.className = "time-sub";
+                sub.textContent = time(d);
+                el.appendChild(sub);
+            } else {
+                el.textContent = day(d) + ", " + time(d);
+            }
+        });
+    })();
+</script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

@@ -863,7 +863,7 @@ def send_submission_response(submission_id, manual=False):
         )
 
         mark_sent(submission_id, to_email)
-        return True, "Response sent successfully."
+        return True, f"Reply sent to {to_email}."
 
     except Exception as exc:
         mark_failed(submission_id, exc)
@@ -977,6 +977,38 @@ def start_background_threads():
     start_inbox_worker_thread()
 
 
+def get_filter_counts():
+    """Number of submissions in each dashboard view, for the sidebar."""
+    conn = get_connection()
+    row = conn.execute(
+        """
+        SELECT
+            COUNT(*) AS all_count,
+            SUM(CASE WHEN LOWER(COALESCE(response_status, 'draft')) IN ('draft', 'sending') THEN 1 ELSE 0 END) AS pending,
+            SUM(CASE WHEN LOWER(COALESCE(response_status, '')) = 'sent' THEN 1 ELSE 0 END) AS sent,
+            SUM(CASE WHEN submission_type = 'direct' OR LOWER(COALESCE(response_status, '')) = 'held' THEN 1 ELSE 0 END) AS direct,
+            SUM(CASE WHEN LOWER(COALESCE(response_status, '')) = 'failed' THEN 1 ELSE 0 END) AS failed,
+            SUM(CASE WHEN LOWER(risk_rating) = 'high risk' THEN 1 ELSE 0 END) AS high,
+            SUM(CASE WHEN LOWER(risk_rating) = 'needs attention' THEN 1 ELSE 0 END) AS attention,
+            SUM(CASE WHEN LOWER(risk_rating) = 'low risk' THEN 1 ELSE 0 END) AS low
+        FROM submissions
+        WHERE COALESCE(is_internal, 0) = 0
+          AND COALESCE(exclude_from_calibration, 0) = 0
+        """
+    ).fetchone()
+    conn.close()
+    return {
+        "all": row["all_count"] or 0,
+        "pending": row["pending"] or 0,
+        "sent": row["sent"] or 0,
+        "direct": row["direct"] or 0,
+        "failed": row["failed"] or 0,
+        "high": row["high"] or 0,
+        "attention": row["attention"] or 0,
+        "low": row["low"] or 0,
+    }
+
+
 def get_submissions(filter_value):
     conn = get_connection()
 
@@ -1043,6 +1075,12 @@ def get_csrf_token():
 
 app.jinja_env.globals["csrf_token"] = get_csrf_token
 app.jinja_env.globals["auto_send_enabled"] = AUTO_SEND_ENABLED
+
+
+@app.template_filter("clean_sender")
+def clean_sender(value):
+    """'"Linkt" <a@b.com>' -> 'Linkt <a@b.com>' for display."""
+    return re.sub(r'\s+', ' ', str(value or "").replace('"', "")).strip()
 
 
 def _credentials_valid(username, password):
@@ -1119,7 +1157,7 @@ def login():
                 _failed_logins[client] = (count + 1, first)
             error = "Incorrect username or password."
 
-    return render_template("login.html", error=error)
+    return render_template("login.html", error=error, admin_password_set=bool(ADMIN_PASSWORD))
 
 
 @app.route("/logout")
@@ -1137,7 +1175,12 @@ def warm_background_threads():
 def dashboard():
     filter_value = (request.args.get("filter") or "all").lower()
     submissions = get_submissions(filter_value)
-    return render_template("index.html", submissions=submissions, active_filter=filter_value)
+    return render_template(
+        "index.html",
+        submissions=submissions,
+        active_filter=filter_value,
+        counts=get_filter_counts(),
+    )
 
 
 @app.route("/submission/<int:submission_id>", methods=["GET", "POST"])
@@ -1160,22 +1203,33 @@ def submission_detail(submission_id):
 
         if action == "mark_correct":
             set_review_status(submission_id, "correct")
-            flash("Review flag updated: Appears Correct.", "success")
+            flash("Saved: verdict is correct.", "success")
             return redirect(url_for("submission_detail", submission_id=submission_id))
 
         if action == "mark_review_required":
             set_review_status(submission_id, "review_required")
-            flash("Review flag updated: Review Required.", "success")
+            flash("Saved: verdict needs review.", "success")
             return redirect(url_for("submission_detail", submission_id=submission_id))
 
         if action == "clear_review":
             set_review_status(submission_id, "unreviewed")
-            flash("Review flag cleared.", "success")
+            flash("Assessment cleared.", "success")
             return redirect(url_for("submission_detail", submission_id=submission_id))
 
         return redirect(url_for("submission_detail", submission_id=submission_id))
 
-    return render_template("detail.html", submission=submission)
+    try:
+        reply_html = build_html_email(submission)
+    except Exception as exc:
+        reply_html = f"<p style='font-family:sans-serif'>Preview unavailable: {html_escape(exc)}</p>"
+
+    return render_template(
+        "detail.html",
+        submission=submission,
+        reply_html=reply_html,
+        counts=get_filter_counts(),
+        active_filter="",
+    )
 
 
 if __name__ == "__main__":
