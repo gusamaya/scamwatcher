@@ -1744,6 +1744,22 @@ def analyze_email(submission):
         ]
         findings = notes + [w for w in check_warnings if w not in notes]
 
+    # Low-risk advertising: say so plainly instead of a bare "Low Risk".
+    message_kind = ""
+    # Marketing: promotional or unsubscribe wording, no failed check, and no
+    # request for money, details or sign-in anywhere in the email.
+    risky_requests = {"payment", "credentials", "sensitive", "bank_change", "untraceable_payment",
+                      "remote_access", "personal_info", "prize", "callback"}
+    looks_like_marketing = marketing_false_positive_override or (
+        promotional_outreach_detected
+        and review.get("fail_count", 0) == 0
+        and not (set(review.get("content_signals") or []) & risky_requests)
+    )
+    if looks_like_marketing and risk_rating == "Low Risk" and not verdict_note:
+        message_kind = "marketing"
+        marketing_name = review.get("claimed_brand") or (parse_from_header(from_header)[0] or "").strip().strip('"') or "the sender"
+        verdict_note = f"Appears to be marketing (advertising) from {marketing_name}, not a scam."
+
     unique_findings = list(dict.fromkeys(findings))
     unique_findings = [normalize_finding_text(f) for f in unique_findings]
     unique_findings = list(dict.fromkeys(unique_findings))
@@ -1797,6 +1813,7 @@ def analyze_email(submission):
         "scam_category": review.get("scam_category", ""),
         "scam_advice": review.get("advice", ""),
         "verdict_note": verdict_note,
+        "message_kind": message_kind,
         "brand": review.get("claimed_brand", ""),
         "proposed_response": build_response({
             "review_checks": review.get("checks", []),

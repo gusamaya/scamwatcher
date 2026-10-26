@@ -62,6 +62,27 @@ def _name(brand):
     return f"the {brand}" if brand in THE_BRANDS else brand
 
 
+def is_marketing(submission):
+    """Advertising rather than a scam: recorded by the analyser, or (for older
+    submissions) recognisable from its findings."""
+    if (submission.get("message_kind") or "") == "marketing":
+        return True
+    findings = submission.get("findings") or []
+    if isinstance(findings, str):
+        findings = [findings]
+    return any("general marketing outreach" in str(f).lower() for f in findings)
+
+
+def _sender_name(submission):
+    if review_checks is None:
+        return ""
+    try:
+        display, address, _domain = review_checks.parse_sender(submission.get("from_header") or "")
+        return (display or "").strip().strip('"')
+    except Exception:
+        return ""
+
+
 def _official_site(brand):
     domains = (BRANDS.get(brand) or {}).get("domains") or []
     return domains[0] if domains else ""
@@ -87,7 +108,8 @@ def build(submission, money_contact="your bank"):
     if brand and brand not in BRANDS:
         # Brand named by the screenshot review: still useful, without a site.
         pass
-    genuine = bool(submission.get("verdict_note"))
+    marketing = is_marketing(submission)
+    genuine = bool(submission.get("verdict_note")) and not marketing
     action = (submission.get("recommended_action") or "").strip()
     specific = action and not action.startswith(GENERIC_ACTION_PREFIXES)
 
@@ -95,7 +117,16 @@ def build(submission, money_contact="your bank"):
     if specific:
         steps.append(action)
 
-    if genuine and brand:
+    if marketing and "high" not in rating and "attention" not in rating:
+        tone = "low"
+        name = brand or _sender_name(submission) or "a company"
+        headline = f"This looks like marketing from {_name(name) if name in BRANDS else name}, not a scam."
+        steps += [
+            "There are no signs of a scam. It's an advertising email, so you don't need to do anything.",
+            "If you don't want these emails, unsubscribe in your account settings on their official website or app.",
+            "As always, don't enter passwords or card details through a link in an email. Go to the website yourself.",
+        ]
+    elif genuine and brand:
         tone = "genuine"
         headline = f"This looks like a real {brand} message, but don't use its links."
         steps += [
