@@ -610,41 +610,68 @@ table{border-collapse:collapse;width:100%}
       </ul>
     </aside>
 
-    <!-- How to get a message checked: forward it or email a screenshot -->
+    <!-- Get it checked: forward it, or use the online form -->
     <div class="console" id="check" aria-labelledby="check-title">
       <div class="weave weave-thin" aria-hidden="true"></div>
       <div class="console-head">
         <h2 id="check-title">Get it checked</h2>
         <span class="chip"><span class="dot" aria-hidden="true"></span>Free · We check it for you</span>
       </div>
-      <p class="console-sub">Forward the suspicious email, or email us a screenshot of the text or message. We'll reply with our assessment and what to do next.</p>
+      <p class="console-sub">Forward the suspicious email, or upload screenshots of the text or message. We'll reply with our assessment and what to do next.</p>
 
       <div class="route">
-        <p class="route-label"><span class="route-num" aria-hidden="true">1</span>Send it to</p>
+        <p class="route-label"><span class="route-num" aria-hidden="true">A</span>Email or forward it</p>
         <div class="route-row">
           <a class="route-email" href="mailto:check@scamwatcher.com.au">check@<wbr>scamwatcher.com.au</a>
           <button class="btn btn-line btn-sm copy-btn" type="button" data-copy="check@scamwatcher.com.au">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></svg>
             Copy address
           </button>
         </div>
         <p class="copy-status" role="status" aria-live="polite"></p>
       </div>
 
-      <div class="route">
-        <p class="route-label"><span class="route-num" aria-hidden="true">2</span>How to send it</p>
-        <ul class="send-tips">
-          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#0B6E6E" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span><strong>An email:</strong> use Forward, so we can see the real sender and links.</span></li>
-          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#0B6E6E" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span><strong>A text or social message:</strong> take a screenshot and attach it to an email to us.</span></li>
-          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#0B6E6E" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span><strong>A phone call:</strong> email us who called, what they said and what they asked for.</span></li>
-        </ul>
-      </div>
+      <p class="or">or</p>
 
-      <div class="alert" id="never-note">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5l9 16H3z"/><path d="M12 10v4"/><path d="M12 17.2v.3"/></svg>
-        <span><strong>Please don't include passwords, PINs or full card numbers.</strong>Feel free to cover account numbers before sending a screenshot. We will never ask you for passwords, PINs or payment.</span>
-      </div>
-      <p class="form-note form-foot">Your message will be reviewed and our assessment sent back to you by email. <a href="#privacy">How we handle your message</a></p>
+      <!-- The form posts to the ScamWatcher review dashboard. -->
+      <form class="check-form" action="https://scamwatcher.onrender.com/intake" method="post" enctype="multipart/form-data" aria-describedby="never-note">
+        <p class="route-label"><span class="route-num" aria-hidden="true">B</span>Use the online form</p>
+        <div class="form-result" id="form-result" role="status" aria-live="polite" tabindex="-1" hidden></div>
+        <!-- Spam trap: hidden from people, filled in by bots. Leave it empty. -->
+        <div class="hp" aria-hidden="true"><label for="website">Leave this empty</label><input id="website" name="website" type="text" tabindex="-1" autocomplete="off"></div>
+        <div class="field">
+          <label for="email">Your email (so we can reply)</label>
+          <input id="email" name="email" type="email" autocomplete="email" placeholder="you@example.com" required>
+        </div>
+        <input type="hidden" name="country" value="Australia">
+        <div class="field">
+            <label for="channel">Where did you get the message?</label>
+            <select id="channel" name="channel">
+              <option value="">Choose…</option>
+              <option>Text message (SMS)</option>
+              <option>Email</option>
+              <option>Facebook or Messenger</option>
+              <option>WhatsApp</option>
+              <option value="Phone call">Phone call (describe it below)</option>
+              <option>Other</option>
+            </select>
+          </div>
+        <div class="field">
+          <label for="screenshot">Screenshots of the message <span class="opt">(up to 5)</span></label>
+          <input id="screenshot" name="screenshot" type="file" accept="image/*" multiple aria-describedby="screenshot-hint">
+          <p class="field-hint" id="screenshot-hint">Add more than one if the conversation is long. Each image up to 10 MB.</p>
+        </div>
+        <div class="field">
+          <label for="notes">Anything else we should know? <span class="opt">(optional)</span></label>
+          <textarea id="notes" name="notes" placeholder="For a phone call, tell us who called, what they said and what they asked you to do."></textarea>
+        </div>
+        <div class="alert" id="never-note">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#B5501E" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l9.5 17h-19z"/><path d="M12 10v4.5M12 17.5v.01"/></svg>
+          <span><strong>Please don't include passwords, PINs or full card numbers.</strong>Feel free to cover account numbers before sending a screenshot. We will never ask you for passwords, PINs or payment.</span>
+        </div>
+        <button class="btn btn-dark" type="submit">Send for checking</button>
+        <p class="form-note form-foot">Your submission will be reviewed and our assessment sent to the email address provided. <a href="#privacy">How we handle your message</a></p>
+      </form>
     </div>
   </div>
   <svg class="wave" viewBox="0 0 1440 56" preserveAspectRatio="none" aria-hidden="true"><path d="M0 28 C 180 0, 360 56, 540 28 C 720 0, 900 56, 1080 28 C 1260 0, 1350 38, 1440 28 V56 H0 Z" fill="#F4F7F6"/></svg>
