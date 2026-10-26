@@ -181,9 +181,55 @@ def _lower(value):
     return (value or "").lower() if isinstance(value, str) else str(value or "").lower()
 
 
+# Letters scammers swap in so a brand name looks right to people but not to
+# filters: accented Latin ("Teļștra"), and Cyrillic or Greek letters that look
+# like Latin ones ("Тelstra" with a Cyrillic Т).
+_CONFUSABLES = str.maketrans({
+    "а": "a", "е": "e", "о": "o", "р": "p", "с": "c", "у": "y", "х": "x", "і": "i", "ј": "j", "ѕ": "s",
+    "ԁ": "d", "ӏ": "l", "һ": "h", "ԛ": "q", "ԝ": "w", "в": "b", "к": "k", "м": "m", "н": "h", "т": "t",
+    "А": "A", "В": "B", "Е": "E", "К": "K", "М": "M", "Н": "H", "О": "O", "Р": "P", "С": "C", "Т": "T",
+    "Х": "X", "У": "Y", "І": "I", "Ј": "J", "Ѕ": "S",
+    "α": "a", "ο": "o", "ρ": "p", "ν": "v", "τ": "t", "ι": "i", "κ": "k", "χ": "x", "υ": "u",
+    "Α": "A", "Β": "B", "Ε": "E", "Η": "H", "Ι": "I", "Κ": "K", "Μ": "M", "Ν": "N", "Ο": "O", "Ρ": "P",
+    "Τ": "T", "Χ": "X", "Υ": "Y", "Ζ": "Z",
+    "ı": "i", "ł": "l", "Ł": "L", "ø": "o", "Ø": "O", "đ": "d", "Đ": "D", "ħ": "h", "ŧ": "t", "ƚ": "l",
+    "ⅼ": "l", "ǀ": "l", "ｌ": "l", "０": "0",
+})
+
+
+def fold_lookalikes(text):
+    """Plain-letter version of text: accents removed and look-alike letters
+    from other alphabets replaced, so "Teļștra" reads as "Telstra"."""
+    import unicodedata
+    text = str(text or "").translate(_CONFUSABLES)
+    decomposed = unicodedata.normalize("NFKD", text)
+    return "".join(ch for ch in decomposed if not unicodedata.combining(ch))
+
+
+def disguised_brand(display_name):
+    """The brand a sender name spells with look-alike letters, or "".
+    Genuine organisations never write their own name this way."""
+    raw = display_name or ""
+    folded = fold_lookalikes(raw)
+    if folded == raw:
+        return ""
+    brand = _brand_in_name(folded)
+    if not brand:
+        return ""
+    # Only a disguise if the brand's plain spelling isn't in the raw name.
+    names = (BRANDS.get(brand) or {}).get("names") or []
+    raw_lower = raw.lower()
+    return "" if any(n in raw_lower for n in names) else brand
+
+
 def parse_sender(from_header):
     """Return (display_name, email_address, domain). Handles "Name <a@b>" and bare addresses."""
     from_header = (from_header or "").strip()
+    # Outlook forwards: "a@x.com <a@x.com> on behalf of Brand Name <a@x.com>".
+    # The name after "on behalf of" is what the recipient saw.
+    behalf = re.search(r"\bon behalf of\b\s*(.+)$", from_header, flags=re.I)
+    if behalf:
+        from_header = behalf.group(1).strip()
     email_match = re.search(r"<\s*([^<>\s]+@[^<>\s]+)\s*>", from_header)
     if email_match:
         address = email_match.group(1)
@@ -366,7 +412,7 @@ def brand_claimed_by_display_name(display_name):
     "Telstra Billing" or "ATO Refunds" claim a brand; "Big Apple Pizza" does not,
     because the remaining words are not generic filler.
     """
-    text = re.sub(r"[^a-z0-9. ]", " ", _lower(display_name))
+    text = re.sub(r"[^a-z0-9. ]", " ", _lower(fold_lookalikes(display_name)))
     text = " " + re.sub(r"\s+", " ", text).strip() + " "
     if not text.strip():
         return ""
@@ -385,7 +431,7 @@ def brand_named_in_display(display_name):
     (nab, anz, ato...) only count when written in capitals, as organisations
     write them; "apple", "meta", "outlook" and "origin" only count through
     brand_claimed_by_display_name, so "Big Apple Pizza" isn't Apple."""
-    raw = display_name or ""
+    raw = fold_lookalikes(display_name or "")
     lowered = " " + re.sub(r"[^a-z0-9. ]", " ", raw.lower()) + " "
     for brand, info in BRANDS.items():
         for name in info["names"]:
@@ -400,8 +446,12 @@ def brand_named_in_display(display_name):
     return ""
 
 
+def _brand_in_name(name):
+    return brand_claimed_by_display_name(name) or brand_named_in_display(name)
+
+
 def brands_mentioned(text):
-    lowered = " " + re.sub(r"\s+", " ", _lower(text)) + " "
+    lowered = " " + re.sub(r"\s+", " ", _lower(fold_lookalikes(text))) + " "
     found = []
     for brand, info in BRANDS.items():
         for name in info["names"]:
@@ -475,6 +525,12 @@ def check_sender(from_header, reply_to="", auth_results=None, submission_type=""
     shown_address = re.search(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}", display or "")
     if shown_address and shown_address.group(0).lower() != address:
         details.append(f"The display name shows a different address ({shown_address.group(0)}) from the real sender ({address}).")
+        levels.append("fail")
+
+    # A brand name spelled with look-alike letters ("Teļștra") is a disguise.
+    disguised = disguised_brand(display)
+    if disguised:
+        details.append(f'The sender name "{display}" spells {disguised} with look-alike letters, a trick to get past filters. Genuine organisations never do this.')
         levels.append("fail")
 
     # Brand claimed by display name or imitated by the domain
