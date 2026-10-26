@@ -1099,6 +1099,7 @@ def get_csrf_token():
 
 app.jinja_env.globals["csrf_token"] = get_csrf_token
 app.jinja_env.globals["auto_send_enabled"] = AUTO_SEND_ENABLED
+app.jinja_env.globals["is_marketing"] = reply_advice.is_marketing
 
 
 @app.template_filter("clean_sender")

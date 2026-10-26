@@ -62,15 +62,43 @@ def _name(brand):
     return f"the {brand}" if brand in THE_BRANDS else brand
 
 
+MARKETING_WORDS = (
+    "unsubscribe", "opt out", "opt-out", "mailing list", "newsletter", "stop receiving",
+    "manage your preferences", "email preferences", "you received this email because",
+    "% off", "sale", "shop now", "book now", "special offer", "deal", "promo", "discount",
+)
+RISKY_REQUESTS = {"payment", "credentials", "sensitive", "bank_change", "untraceable_payment",
+                  "remote_access", "personal_info", "prize", "callback"}
+
+
 def is_marketing(submission):
-    """Advertising rather than a scam: recorded by the analyser, or (for older
-    submissions) recognisable from its findings."""
-    if (submission.get("message_kind") or "") == "marketing":
-        return True
+    """Advertising rather than a scam. Recorded by the analyser for new
+    emails; for ones assessed before that, worked out from the email itself
+    (Low Risk, advertising wording, and no request for money, details,
+    sign-in or a call)."""
+    kind = (submission.get("message_kind") or "")
+    if kind:
+        return kind == "marketing"
+    if "low" not in (submission.get("risk_rating") or "").lower():
+        return False
+    if submission.get("verdict_note") or submission.get("submission_type") == "web_form":
+        return False
     findings = submission.get("findings") or []
     if isinstance(findings, str):
         findings = [findings]
-    return any("general marketing outreach" in str(f).lower() for f in findings)
+    if any("general marketing outreach" in str(f).lower() for f in findings):
+        return True
+    text = f"{submission.get('subject') or ''}\n{submission.get('body') or ''}"
+    lowered = text.lower()
+    if not any(w in lowered for w in MARKETING_WORDS):
+        return False
+    if review_checks is None:
+        return False
+    try:
+        signals = set(review_checks.check_content(submission.get("subject") or "", submission.get("body") or "").get("signals") or [])
+    except Exception:
+        return False
+    return not (signals & RISKY_REQUESTS)
 
 
 def _sender_name(submission):
