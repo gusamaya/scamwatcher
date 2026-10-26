@@ -705,19 +705,48 @@ def analyze_pdf_signals(pdf_text, sender_email, sender_domain, display_name, bod
     }
 
 
+# Standard footer text found in almost every legitimate marketing or service
+# email. The older keyword scoring read it as requests ("personal
+# information", "your details") or as mismatched contacts ("This email was
+# sent to you@..."), so it is removed before that scoring runs. The
+# structured four-part review still sees the full email.
+_BOILERPLATE_MARKERS = (
+    "privacy policy", "privacy notice", "terms of use", "terms and conditions",
+    "unsubscribe", "opt out", "opt-out", "manage your preferences", "email preferences",
+    "this email was sent to", "this message was sent to", "you are receiving this",
+    "you received this email", "you're receiving this", "all rights reserved",
+    "collect and process", "how we use your", "how we collect", "view in browser",
+    "view this email", "do not reply to this email", "add us to your address book",
+)
+
+
+def strip_boilerplate(text):
+    """Drop footer/legal sentences so keyword scoring only sees the message."""
+    if not text:
+        return ""
+    kept = []
+    for line in str(text).splitlines():
+        parts = re.split(r"(?<=[.!?])\s+", line)
+        parts = [p for p in parts if not any(m in p.lower() for m in _BOILERPLATE_MARKERS)]
+        if parts:
+            kept.append(" ".join(parts))
+    return "\n".join(kept)
+
+
 def analyze_email(submission):
     from_header = submission.get("from_header", "")
     subject = submission.get("subject", "")
     raw_body = submission.get("body", "")
     body = clean_forwarded_content(raw_body)
+    legacy_body = strip_boilerplate(body)
 
-    base = assess_email_risk(from_header, subject, body)
+    base = assess_email_risk(from_header, subject, legacy_body)
 
     risk_score = base["score"]
     findings = list(base["findings"])
     signals = base["signals"]
 
-    combined_lower = f"{subject} {body}".lower()
+    combined_lower = f"{subject} {legacy_body}".lower()
     display_name, parsed_sender_email, parsed_sender_domain = parse_from_header(from_header)
 
     has_attachments = bool(submission.get("has_attachments", False))
@@ -898,6 +927,10 @@ def analyze_email(submission):
         risk_score += 20
 
     info_request_detected = any(p in combined_lower for p in info_request_phrases)
+    # Only an explicit request ("confirm your details") is strong evidence on
+    # its own; the loose match below ("personal" and "information" anywhere)
+    # still adds to the score but cannot override four passing checks.
+    info_request_explicit = info_request_detected
 
     if not info_request_detected:
         if (
@@ -957,7 +990,16 @@ def analyze_email(submission):
         findings.append("The message pushes for a direct reply to continue an unexplained opportunity.")
         risk_score = max(risk_score, 85)
 
-    body_domains = extract_email_domains(body)
+    # The forwarder's own address (and any "sent to you@..." footer) is not a
+    # contact the message is pushing them towards.
+    # (Only the person who sent it to us: the original email's Reply-To may be
+    # the scammer's address and must stay visible to the checks.)
+    own_addresses = set()
+    for k in ("submitter_email", "submitter_from_header"):
+        for addr in re.findall(r"[\w.+-]+@[\w.-]+", submission.get(k) or ""):
+            own_addresses.add(addr.strip(".").lower())
+    own_domains = {a.split("@", 1)[1] for a in own_addresses if "@" in a}
+    body_domains = [d for d in extract_email_domains(legacy_body) if d not in own_domains]
 
     body_mismatch = False
     gmail_body_contact = False
@@ -1630,10 +1672,18 @@ def analyze_email(submission):
     ) or get_attachment_text_from_submission(submission)
 
     try:
+        # The forwarder's own address (e.g. a footer's "sent to you@...") is
+        # not a contact or link the message points to.
+        review_body = body
+        for own in own_addresses:
+            if own and "@" in own:
+                review_body = re.sub(re.escape(own), "", review_body, flags=re.I)
+        # "This email was sent to: x@y" names the recipient, whoever forwarded it.
+        review_body = re.sub(r"((?:was|is)\s+sent\s+to:?\s*)[\w.+-]+@[\w.-]+", r"\1", review_body, flags=re.I)
         review = run_review(
             from_header=from_header,
             subject=subject,
-            body=body,
+            body=review_body,
             reply_to=submission.get("reply_to", ""),
             html_links=submission.get("html_links") or [],
             auth_results=submission.get("auth_results") or {},
@@ -1653,7 +1703,7 @@ def analyze_email(submission):
     # still count, so those cases keep their score.
     older_engine_strong_evidence = any([
         strong_attachment_risk,
-        info_request_detected,
+        info_request_explicit,
         advance_fee_detected,
         unexpected_reward_detected,
         body_mismatch and gmail_body_contact,

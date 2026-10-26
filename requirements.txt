@@ -4,3 +4,4 @@ openai
 python-dotenv
 imapclient
 PyPDF2
+Pillow

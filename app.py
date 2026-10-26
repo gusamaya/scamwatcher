@@ -8,15 +8,20 @@ import sqlite3
 import sys
 import threading
 import time
+import uuid
 from datetime import datetime
 from email.message import EmailMessage
 
-from flask import Flask, render_template, request, redirect, url_for, abort, flash, session
+from flask import Flask, render_template, request, redirect, url_for, abort, flash, session, send_file
 from dotenv import load_dotenv
 
-import reply_advice
-
 load_dotenv()
+
+import auto_review
+import database
+import reply_advice
+import report_contacts
+import uploads
 
 # Write log lines immediately. Without this, output from background threads can
 # sit in a buffer and never appear in the hosting provider's logs.
@@ -27,12 +32,59 @@ except Exception:
     pass
 
 DB_NAME = os.getenv("DB_PATH", "/var/data/scamwatcher.db")
-AUDIT_BCC_EMAIL = "scamwatcher.audit@gmail.com"
+
+# ------------------------------------------------------------------
+# Branding and mail settings (all overridable with environment variables)
+# ------------------------------------------------------------------
+BRAND_NAME = os.getenv("BRAND_NAME", "ScamWatcher")
+BRAND_TAGLINE = os.getenv("BRAND_TAGLINE", "Helping people stay safe in a digital world")
+ADVISOR_NAME = os.getenv("ADVISOR_NAME", "Serena")
+ADVISOR_TITLE = os.getenv("ADVISOR_TITLE", "ScamWatcher Advisor")
+REFERENCE_PREFIX = os.getenv("REFERENCE_PREFIX", "SW")
+SITE_URL = os.getenv("SITE_URL", "https://scamwatcher.com.au").strip().rstrip("/")
+if SITE_URL and not SITE_URL.startswith(("http://", "https://")):
+    # Render's service references give a bare host name.
+    SITE_URL = "https://" + SITE_URL
+# Off unless set: a copy of every reply goes to this address. Leave empty to keep
+# submissions visible only to the review team, as the website promises.
+AUDIT_BCC_EMAIL = os.getenv("AUDIT_BCC_EMAIL", "scamwatcher.audit@gmail.com").strip()
+# Reply wording and colours, so the same code serves both ScamWatcher sites.
+REPLY_GREETING = os.getenv("REPLY_GREETING", "Hi there,")
+REPLY_INTRO = os.getenv("REPLY_INTRO", "Thank you for sending us this message to check. Here is our advice.")
+REPLY_SIGNOFF = os.getenv("REPLY_SIGNOFF", "Regards,")
+MONEY_CONTACT = os.getenv("MONEY_CONTACT", "your bank")
+EMAIL_ACCENT = os.getenv("EMAIL_ACCENT", "#D9A93A")
+EMAIL_DARK = os.getenv("EMAIL_DARK", "#0f2d5c")
+# Country recorded for website submissions when the form doesn't ask for one.
+DEFAULT_COUNTRY = os.getenv("DEFAULT_COUNTRY", "Australia").strip()
+SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+
+INDEPENDENCE_NOTE = (
+    f"{BRAND_NAME} is an independent advisory service. It is not affiliated with any "
+    "government, police service, bank or telco, or with the Australian Government's "
+    "Scamwatch. We will never ask you for passwords, PINs or payment."
+)
+
+# Uploaded screenshots (web form and email image attachments) live here.
+UPLOAD_DIR = os.getenv("UPLOAD_DIR", os.path.join(os.path.dirname(DB_NAME) or ".", "uploads"))
+MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "10"))
+
+# Delete submissions, their screenshots and the matching inbox emails after this
+# many days. Must match "Deleted after [X] days" on the website. 0 = never.
+RETENTION_DAYS = int(os.getenv("RETENTION_DAYS", "0"))
 
 # Off by default: replies wait in the dashboard until an admin clicks
 # "Approve & send". Set AUTO_SEND_ENABLED=true only once you trust the scoring.
 AUTO_SEND_ENABLED = os.getenv("AUTO_SEND_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
 AUTO_SEND_INTERVAL_SECONDS = int(os.getenv("AUTO_SEND_INTERVAL_SECONDS", "15"))
+# Screenshot replies are sent automatically only when the automatic review
+# read them with high confidence. Set to false to send every screenshot reply
+# by hand.
+AUTO_SEND_SCREENSHOTS = os.getenv("AUTO_SEND_SCREENSHOTS", "true").strip().lower() in {"1", "true", "yes", "on"}
+# Only reply automatically to submissions received at or after this UTC time
+# ("YYYY-MM-DD HH:MM:SS"), so switching auto-send on never mails old drafts.
+AUTO_SEND_AFTER = os.getenv("AUTO_SEND_AFTER", "").strip()
 MAX_SEND_ATTEMPTS = int(os.getenv("MAX_SEND_ATTEMPTS", "3"))
 # A submission left in "sending" this long (e.g. the server restarted mid-send)
 # is treated as failed so it can be retried or reviewed.
@@ -46,6 +98,10 @@ ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
 
 app = Flask(__name__)
+# Hard cap on any request body (the web form's screenshot plus its fields).
+# Up to MAX_SCREENSHOTS images per website submission, each up to MAX_UPLOAD_MB.
+MAX_SCREENSHOTS = int(os.getenv("MAX_SCREENSHOTS", "5"))
+app.config["MAX_CONTENT_LENGTH"] = (MAX_SCREENSHOTS * MAX_UPLOAD_MB + 1) * 1024 * 1024
 
 _secret_key = os.getenv("SECRET_KEY", "").strip()
 if not _secret_key:
@@ -77,6 +133,7 @@ def get_connection():
 
     conn = sqlite3.connect(DB_NAME, timeout=30)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA busy_timeout = 30000")
     return conn
 
 
@@ -174,7 +231,9 @@ def normalize_findings(value):
     for item in raw_findings:
         parts = split_combined_finding_text(item)
         for part in parts:
-            if part:
+            # Single characters come from a string that was split letter by
+            # letter (an older automatic-review bug); they are never findings.
+            if part and len(part.strip()) > 1:
                 cleaned_findings.append(part)
 
     seen = set()
@@ -290,6 +349,8 @@ def column_exists(conn, table_name, column_name):
 
 
 def ensure_schema():
+    get_connection().close()  # makes sure the folder exists
+    database.enable_wal()
     conn = get_connection()
     cursor = conn.cursor()
 
@@ -335,6 +396,13 @@ def ensure_schema():
         "review_checks": "TEXT",
         "scam_type": "TEXT",
         "scam_category": "TEXT",
+        "country": "TEXT",
+        "channel": "TEXT",
+        "screenshot_files": "TEXT",
+        "created_at": "TEXT",
+        "screenshot_text": "TEXT",
+        "auto_review": "TEXT",
+        "auto_review_error": "TEXT",
         "verdict_note": "TEXT",
         "brand": "TEXT",
         "message_kind": "TEXT",
@@ -364,6 +432,9 @@ def prepare_submission_record(data):
         data["review_checks"] = checks if isinstance(checks, list) else []
     except Exception:
         data["review_checks"] = []
+
+    data["screenshot_files"] = [str(n) for n in parse_json_list(data.get("screenshot_files")) if n]
+    data["auto_review"] = parse_json_dict(data.get("auto_review"))
 
     if data["attachment_names"]:
         data["has_attachments"] = 1
@@ -416,9 +487,9 @@ def html_escape(text):
 
 def make_reference_code(submission_id):
     try:
-        return f"SW-{int(submission_id):05d}"
+        return f"{REFERENCE_PREFIX}-{int(submission_id):05d}"
     except Exception:
-        return f"SW-{submission_id}"
+        return f"{REFERENCE_PREFIX}-{submission_id}"
 
 
 def sanitize_preview(text, max_length=700):
@@ -440,6 +511,11 @@ def sanitize_preview(text, max_length=700):
 
 
 def build_attachment_insight_lines(submission):
+    # Screenshots are the person's own picture of the message, not something the
+    # automatic checks analysed, so there is nothing to report about them.
+    if submission.get("screenshot_files") or submission.get("submission_type") == "web_form":
+        return []
+
     attachment_names = submission.get("attachment_names") or []
     attachment_signals = submission.get("attachment_signals") or {}
     has_attachments = bool(submission.get("has_attachments")) or bool(attachment_names)
@@ -452,10 +528,10 @@ def build_attachment_insight_lines(submission):
     if attachment_names:
         lines.append(f"Attachment(s) detected: {', '.join(attachment_names[:3])}.")
     else:
-        lines.append("One or more attachments were detected in this email.")
+        lines.append("One or more attachments were included.")
 
     if attachment_signals.get("pdf_present"):
-        lines.append("The attachment is the primary risk area in this email.")
+        lines.append("The attachment is the primary risk area in this message.")
 
     if attachment_signals.get("updated_payment_details_present"):
         lines.append("The attachment appears to request updated or changed banking details.")
@@ -494,8 +570,21 @@ def build_attachment_insight_lines(submission):
     return deduped
 
 
+def report_line(submission):
+    """'To report it in Samoa, ...' for scams and warning signs, when we know
+    the person's country (the website form asks for it). Empty otherwise."""
+    if reply_advice.build(submission)["tone"] not in ("high", "attention"):
+        return ""
+    return report_contacts.reply_line(submission.get("country") or "")
+
+
 def build_html_email(submission):
     risk = submission.get("risk_rating") or "Needs Attention"
+    report_text = report_line(submission)
+    report_box = (
+        f'<div style="margin:-12px 0 24px 0; padding:12px 16px; background:#F7EEE2; border-radius:10px; font-size:14px; color:#22404D;">'
+        f'<strong>Where to report:</strong> {html_escape(report_text)}</div>'
+    ) if report_text else ""
     action = submission.get("recommended_action") or ""
     findings = normalize_findings(submission.get("findings") or [])
     reference_code = make_reference_code(submission.get("id"))
@@ -538,24 +627,27 @@ def build_html_email(submission):
         guidance = "If you are considering engaging, ensure any response or action is appropriate for your situation."
     elif "high" in risk.lower():
         if attachment_lines:
-            guidance_strong = "Do not open the attachment, click any links, or act on this email unless it has been independently verified."
+            guidance_strong = "Do not open the attachment, click any links, or act on this message unless it has been independently verified."
         else:
-            guidance_strong = "Do not click any links, reply, or act on this email unless it has been independently verified."
-        guidance = "Verify any request using contact details sourced independently from the email, and do not rely on any attachment without verification."
+            guidance_strong = "Do not click any links, reply, or act on this message unless it has been independently verified."
+        guidance = "Verify any request using contact details sourced independently from the message, and do not rely on any attachment without verification."
     else:
         guidance_strong = "We recommend not taking action until this request has been independently verified."
-        guidance = "Verify any request using contact details sourced independently from the email, and do not rely on any attachment without verification."
+        guidance = "Verify any request using contact details sourced independently from the message, and do not rely on any attachment without verification."
 
     if submission.get("verdict_note"):
         # Genuine-looking email: the safe habit, not a scam warning.
         guidance_strong = "Go to the organisation directly rather than through the email."
         guidance = "Use their official app, or type their website address yourself, and use the phone number printed on their website or your bill."
 
-    original_from = html_escape(submission.get("from_header") or "Unknown sender")
+    is_web_form = (submission.get("submission_type") or "") == "web_form"
+    original_from = html_escape(submission.get("from_header") or "Not provided")
     original_subject = html_escape(submission.get("subject") or "(No subject)")
     original_received = html_escape(submission.get("received_at") or "Unknown")
     original_excerpt = html_escape(sanitize_preview(submission.get("body") or ""))
     attachment_names = submission.get("attachment_names") or []
+    country = html_escape(submission.get("country") or "")
+    channel = html_escape(submission.get("channel") or "")
 
     divider = "-" * 112
 
@@ -570,14 +662,14 @@ def build_html_email(submission):
         label, bg, fg, border = status_styles.get(check.get("status"), status_styles["info"])
         check_rows += f"""
                 <tr>
-                    <td valign="top" style="padding:8px 10px 8px 0; font-weight:700; color:#111827; white-space:nowrap;">{html_escape(check.get("title"))}</td>
+                    <td valign="top" style="padding:8px 10px 8px 0; font-weight:700; color:{EMAIL_DARK}; white-space:nowrap;">{html_escape(check.get("title"))}</td>
                     <td valign="top" style="padding:8px 10px;"><span style="display:inline-block; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:700; background:{bg}; color:{fg}; border:1px solid {border};">{label}</span></td>
-                    <td valign="top" style="padding:8px 0; color:#111827;">{html_escape(check.get("headline"))}</td>
+                    <td valign="top" style="padding:8px 0; color:#22404D;">{html_escape(check.get("headline"))}</td>
                 </tr>"""
     checks_box = ""
     if check_rows:
         checks_box = f"""
-            <div style="font-size:14px; font-weight:700; color:#111827; margin-bottom:6px;">How we checked it:</div>
+            <div style="font-size:14px; font-weight:700; color:{EMAIL_DARK}; margin-bottom:6px;">How we checked it:</div>
             <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse; margin:0 0 22px 0; font-size:14px; line-height:1.5;">
                 {check_rows}
             </table>
@@ -587,7 +679,7 @@ def build_html_email(submission):
     for check in submission.get("review_checks") or []:
         if check.get("key") == "known_scams" and check.get("status") in ("fail", "caution") and check.get("details"):
             tip_box = f"""
-            <div style="background:#eff6ff; border:1px solid #bfdbfe; border-radius:10px; padding:12px 14px; margin:0 0 22px 0; color:#1e3a8a; font-size:14px; line-height:1.6;">
+            <div style="background:#E3F2EF; border:1px solid #BFE7E1; border-radius:10px; padding:12px 14px; margin:0 0 22px 0; color:#085454; font-size:14px; line-height:1.6;">
                 <strong>Tip:</strong> {html_escape(check["details"][-1])}
             </div>
             """
@@ -595,7 +687,7 @@ def build_html_email(submission):
     genuine_box = ""
     if submission.get("verdict_note"):
         genuine_box = f"""
-            <div style="background:#f0fdf4; border:1px solid #bbf7d0; border-radius:10px; padding:12px 14px; margin:0 0 18px 0; color:#166534; font-size:14px; line-height:1.6;">
+            <div style="background:#E7F6EE; border:1px solid #B4E2C8; border-radius:10px; padding:12px 14px; margin:0 0 18px 0; color:#065F3B; font-size:14px; line-height:1.6;">
                 <strong>{html_escape(submission.get("verdict_note"))}</strong>
                 {"" if reply_advice.is_marketing(submission) else "That still doesn't make the links or phone number in it safe to use, so follow the advice above."}
             </div>
@@ -604,7 +696,7 @@ def build_html_email(submission):
     scam_type_box = ""
     if submission.get("scam_type"):
         scam_type_box = f"""
-            <div style="font-size:14px; font-weight:700; color:#111827; margin-bottom:4px;">Likely scam type:</div>
+            <div style="font-size:14px; font-weight:700; color:{EMAIL_DARK}; margin-bottom:4px;">Likely scam type:</div>
             <div style="font-size:14px; color:#991b1b; font-weight:700; margin-bottom:14px;">{html_escape(submission.get("scam_type"))}</div>
         """
 
@@ -614,37 +706,63 @@ def build_html_email(submission):
                 <div style="margin-top:10px;"><strong>Attachments:</strong> {html_escape(', '.join(attachment_names[:5]))}</div>
         """
 
+    if is_web_form:
+        original_details = f"""
+                <div><strong>Reference:</strong> {html_escape(reference_code)}</div>
+                <div><strong>Sent to us:</strong> {original_received} (UTC)</div>
+                {f'<div><strong>Country:</strong> {country}</div>' if country else ''}
+                {f'<div><strong>Received by:</strong> {channel}</div>' if channel else ''}
+                {original_attachment_block}
+                {f'<div style="margin-top:10px;"><strong>Your notes:</strong> {original_excerpt}</div>' if submission.get("body") else ''}
+        """
+    else:
+        original_details = f"""
+                <div><strong>Reference:</strong> {html_escape(reference_code)}</div>
+                <div><strong>From:</strong> {original_from}</div>
+                <div><strong>Subject:</strong> {original_subject}</div>
+                <div><strong>Received:</strong> {original_received}</div>
+                {original_attachment_block}
+                <div style="margin-top:10px;"><strong>Message excerpt:</strong> {original_excerpt}</div>
+        """
+
+    advisor_title_line = (
+        f'<div style="font-size:14px; color:#22404D; margin-top:4px;">{html_escape(ADVISOR_TITLE)}</div>'
+        if ADVISOR_TITLE else ""
+    )
+
     return f"""
     <html>
-    <body style="margin:0; padding:20px; background:#ffffff; font-family:Arial, sans-serif; font-size:14px; color:#111827; line-height:1.6;">
+    <body style="margin:0; padding:20px; background:#ffffff; font-family:Arial, sans-serif; font-size:14px; color:#22404D; line-height:1.6;">
         <div style="max-width:640px; margin:0 auto;">
 
-            <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse; margin-bottom:24px;">
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse; margin-bottom:24px; border-bottom:3px solid {EMAIL_ACCENT};">
                 <tr>
-                    <td valign="top" style="font-size:20px; font-weight:700; color:#0f2d5c;">
-                        ScamWatcher
+                    <td valign="bottom" style="font-size:20px; font-weight:700; color:{EMAIL_DARK}; padding-bottom:10px;">
+                        {html_escape(BRAND_NAME)}
                     </td>
-                    <td valign="top" align="right" style="font-size:11px; font-weight:500; color:#6b7280; line-height:1.2; white-space:nowrap;">
-                        Helping people stay safe in a digital world
+                    <td valign="bottom" align="right" style="font-size:11px; font-weight:500; color:#46606D; line-height:1.2; padding-bottom:12px;">
+                        {html_escape(BRAND_TAGLINE)}
                     </td>
                 </tr>
             </table>
 
-            <div style="font-size:14px; color:#111827; margin-bottom:10px;">Hi there,</div>
+            <div style="margin-bottom:10px;">{html_escape(REPLY_GREETING)}</div>
 
-            <div style="font-size:14px; color:#111827; margin-bottom:18px;">
-                You requested this review via ScamWatcher. Here is our advice.
+            <div style="margin-bottom:18px;">
+                {html_escape(REPLY_INTRO)}
             </div>
 
-            {reply_advice.html_box(submission)}
+            {reply_advice.html_box(submission, money_contact=MONEY_CONTACT)}
 
-            <div style="border-top:1px solid #e5e7eb; padding-top:16px; font-size:16px; font-weight:700; color:#111827; margin-bottom:12px;">
-                Why we think this
+            {report_box}
+
+            <div style="font-size:16px; font-weight:700; color:{EMAIL_DARK}; margin:0 0 12px 0; padding-top:4px; border-top:1px solid #D3E0E2;">
+                <div style="padding-top:16px;">Why we think this</div>
             </div>
 
-            <div style="font-size:13px; color:#6b7280; margin-bottom:14px;">
+            <div style="font-size:13px; color:#46606D; margin-bottom:14px;">
                 Reference: <strong>{html_escape(reference_code)}</strong> &middot;
-                Assessment result: <strong style="color:{risk_color};">{html_escape(risk)}</strong>
+                Our assessment: <strong style="color:{risk_color};">{html_escape(risk)}</strong>
             </div>
 
             {scam_type_box}
@@ -653,10 +771,8 @@ def build_html_email(submission):
 
             {checks_box}
 
-            <div style="font-size:14px; font-weight:700; color:#111827; margin-bottom:8px;">
-                What ScamWatcher observed:
-            </div>
-            <ul style="margin:0 0 22px 20px; padding:0; color:#111827;">
+            <div style="font-size:14px; font-weight:700; color:{EMAIL_DARK}; margin-bottom:8px;">What we noticed:</div>
+            <ul style="margin:0 0 22px 20px; padding:0; color:#22404D;">
                 {findings_items}
             </ul>
 
@@ -664,34 +780,59 @@ def build_html_email(submission):
 
             {tip_box}
 
-            <div style="font-size:14px; color:#111827; margin:12px 0 10px;">Regards,</div>
-            <div style="font-size:14px; font-weight:700; color:#111827;">Serena</div>
-            <div style="font-size:14px; color:#111827; margin-top:6px;">ScamWatcher Advisor</div>
-            <div style="font-size:12px; color:#111827; margin-top:8px;">
-                Independent advisory service.
-            </div>
+            <div style="margin-bottom:6px;">{html_escape(REPLY_SIGNOFF)}</div>
+            <div style="font-weight:700; color:{EMAIL_DARK};">{html_escape(ADVISOR_NAME)}</div>
+            {advisor_title_line}
+            <div style="font-size:12px; color:#46606D; margin-top:12px; line-height:1.5;">{html_escape(INDEPENDENCE_NOTE)}</div>
 
-            <div style="margin-top:28px; margin-bottom:18px; font-size:12px; line-height:1.4; color:#6b7280; white-space:pre-wrap; word-break:break-word; overflow-wrap:anywhere;">{divider}</div>
+            <div style="margin-top:28px; margin-bottom:18px; font-size:12px; line-height:1.4; color:#B8CCD0; white-space:pre-wrap; word-break:break-word; overflow-wrap:anywhere;">{divider}</div>
 
-            <div style="margin-top:0; font-size:14px; font-weight:700; color:#111827; margin-bottom:8px;">
-                Original Email (for reference)
-            </div>
+            <div style="font-size:14px; font-weight:700; color:{EMAIL_DARK}; margin-bottom:8px;">What you sent us (for reference)</div>
             <div style="font-size:13px; line-height:1.6; color:#374151;">
-                <div><strong>Reference:</strong> {html_escape(reference_code)}</div>
-                <div><strong>From:</strong> {original_from}</div>
-                <div><strong>Subject:</strong> {original_subject}</div>
-                <div><strong>Received:</strong> {original_received}</div>
-                {original_attachment_block}
-                <div style="margin-top:10px;"><strong>Original Message Excerpt:</strong> {original_excerpt}</div>
-                <div style="margin-top:8px; font-size:12px; color:#6b7280;">
-                    Links have been removed from this reply for safety.
-                </div>
+                {original_details}
+                <div style="margin-top:8px; font-size:12px; color:#46606D;">Links have been removed from this reply for safety. You can ask us to delete your submission at any time by emailing <a href="mailto:privacy@scamwatcher.com.au?subject=Please%20delete%20what%20I%20sent" style="color:#46606D;">privacy@scamwatcher.com.au</a>.</div>
             </div>
 
         </div>
     </body>
     </html>
     """
+
+
+def build_plain_text_email(submission):
+    """Plain-text version for mail apps that do not show HTML."""
+    reference_code = make_reference_code(submission.get("id"))
+    findings = normalize_findings(submission.get("findings") or [])
+    lines = [
+        REPLY_GREETING,
+        "",
+        REPLY_INTRO,
+        "",
+    ]
+    lines += reply_advice.text_block(submission, money_contact=MONEY_CONTACT)
+    if report_line(submission):
+        lines += ["", "Where to report: " + report_line(submission)]
+    lines += [
+        "",
+        "WHY WE THINK THIS",
+        f"Reference: {reference_code}",
+        f"Our assessment: {submission.get('risk_rating') or 'Needs Attention'}",
+    ]
+    if submission.get("scam_type"):
+        lines.append(f"Likely scam type: {submission.get('scam_type')}")
+    if submission.get("verdict_note"):
+        lines.append(submission.get("verdict_note"))
+    if findings:
+        lines += ["", "What we noticed:"] + [f"- {f}" for f in findings[:5]]
+    lines += [
+        "",
+        REPLY_SIGNOFF,
+        ADVISOR_NAME,
+    ]
+    if ADVISOR_TITLE:
+        lines.append(ADVISOR_TITLE)
+    lines += ["", INDEPENDENCE_NOTE]
+    return "\n".join(lines)
 
 
 def send_email(to, subject, body, html_body=None, bcc=None):
@@ -714,12 +855,12 @@ def send_email(to, subject, body, html_body=None, bcc=None):
             bcc_list = [email.strip() for email in str(bcc).split(",") if email.strip()]
         recipients.extend(bcc_list)
 
-    msg.set_content(body or "ScamWatcher review attached.")
+    msg.set_content(body or f"{BRAND_NAME} review attached.")
 
     if html_body:
         msg.add_alternative(html_body, subtype="html")
 
-    with smtplib.SMTP("smtp.gmail.com", 587) as server:
+    with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
         server.starttls()
         server.login(username, password)
         server.send_message(msg, to_addrs=recipients)
@@ -758,6 +899,9 @@ def can_auto_send_submission(submission):
     status = (submission.get("response_status") or "draft").strip().lower()
     if status == "sent":
         return False, "Already sent."
+
+    if status == "manual":
+        return False, "Write the reply first: this submission needs a person to review the screenshot."
 
     return True, ""
 
@@ -813,7 +957,7 @@ def try_claim_submission_for_sending(submission_id):
             return False
 
         status = (row["response_status"] or "draft").strip().lower()
-        if status in {"sent", "sending"}:
+        if status in {"sent", "sending", "manual"}:
             conn.rollback()
             return False
 
@@ -862,10 +1006,10 @@ def send_submission_response(submission_id, manual=False):
 
         send_email(
             to=to_email,
-            subject=f"ScamWatcher Review – {reference_code} – {original_subject}",
-            body="\n".join(reply_advice.text_block(submission)) + "\n\n" + (submission.get("proposed_response") or ""),
+            subject=f"{BRAND_NAME} review – {reference_code} – {original_subject}",
+            body=build_plain_text_email(submission),
             html_body=html_body,
-            bcc=AUDIT_BCC_EMAIL,
+            bcc=AUDIT_BCC_EMAIL or None,
         )
 
         mark_sent(submission_id, to_email)
@@ -887,14 +1031,30 @@ def get_pending_auto_send_ids(limit=25):
           AND COALESCE(response_status, 'draft') IN ('draft', 'failed')
           AND COALESCE(proposed_response, '') <> ''
           AND COALESCE(send_attempts, 0) < ?
-          -- Only ever auto-reply to people who forwarded an email to us. Direct
-          -- emails (and older records saved before this was tracked) need a
-          -- person to click "Approve and Send".
-          AND submission_type = 'forwarded'
+          AND (
+            -- Emails forwarded to us, checked by the rule-based review.
+            -- Direct emails (the "sender" is usually the scammer) and older
+            -- records saved before this was tracked always wait for a person.
+            (submission_type = 'forwarded' AND COALESCE(screenshot_files, '[]') = '[]')
+            OR
+            -- Screenshots (website form or email) once the automatic review
+            -- has read them with HIGH confidence. Medium/low confidence,
+            -- unreadable images and failed reviews wait for a person.
+            (submission_type IN ('forwarded', 'web_form')
+             AND COALESCE(screenshot_files, '[]') <> '[]'
+             AND AUTO_SCREENSHOTS_OK = 1
+             AND LOWER(COALESCE(confidence_label, '')) = 'high'
+             AND COALESCE(auto_review, '') <> ''
+             AND COALESCE(auto_review, '') NOT LIKE '%"readable": false%'
+             AND COALESCE(auto_review_error, '') = '')
+          )
+          -- Never reply automatically to anything received before automatic
+          -- replies were switched on (old drafts and test messages).
+          AND (? = '' OR datetime(COALESCE(created_at, received_at)) >= datetime(?))
         ORDER BY datetime(received_at) ASC, id ASC
         LIMIT ?
-        """,
-        (MAX_SEND_ATTEMPTS, limit),
+        """.replace("AUTO_SCREENSHOTS_OK", "1" if AUTO_SEND_SCREENSHOTS else "0"),
+        (MAX_SEND_ATTEMPTS, AUTO_SEND_AFTER, AUTO_SEND_AFTER, limit),
     ).fetchall()
     conn.close()
     return [row["id"] for row in rows]
@@ -978,6 +1138,96 @@ def start_inbox_worker_thread():
     print("[InboxWorker] Embedded worker thread started.")
 
 
+_retention_thread_started = False
+RETENTION_CHECK_SECONDS = 3600
+
+
+def purge_expired_submissions():
+    """Delete submissions, screenshots and mailbox copies older than
+    RETENTION_DAYS, as promised on the website."""
+    if RETENTION_DAYS <= 0:
+        return
+
+    conn = get_connection()
+    rows = conn.execute(
+        """
+        SELECT id, screenshot_files
+        FROM submissions
+        WHERE datetime(COALESCE(created_at, received_at)) < datetime('now', ?)
+        """,
+        (f"-{RETENTION_DAYS} days",),
+    ).fetchall()
+    ids = [row["id"] for row in rows]
+    for row in rows:
+        uploads.delete_files(parse_json_list(row["screenshot_files"]))
+    if ids:
+        conn.executemany("DELETE FROM submissions WHERE id = ?", [(i,) for i in ids])
+        conn.commit()
+    conn.close()
+
+    # Files left behind by a failed save, or anything else past the limit.
+    cutoff = time.time() - RETENTION_DAYS * 86400
+    removed_files = 0
+    if os.path.isdir(UPLOAD_DIR):
+        for name in os.listdir(UPLOAD_DIR):
+            path = uploads.file_path(name)
+            if path and os.path.getmtime(path) < cutoff:
+                uploads.delete_files([name])
+                removed_files += 1
+
+    removed_mail = 0
+    try:
+        import email_reader
+        removed_mail = email_reader.delete_messages_older_than(RETENTION_DAYS)
+    except Exception as exc:
+        print(f"[Retention] Could not clean the mailbox: {exc}", flush=True)
+
+    if ids or removed_files or removed_mail:
+        print(
+            f"[Retention] Removed {len(ids)} submission(s), {removed_files} stray file(s) "
+            f"and {removed_mail} email(s) older than {RETENTION_DAYS} days.",
+            flush=True,
+        )
+
+
+def retention_worker_loop():
+    while True:
+        try:
+            purge_expired_submissions()
+        except Exception as exc:
+            print(f"[Retention] Error: {exc}", flush=True)
+        time.sleep(RETENTION_CHECK_SECONDS)
+
+
+def start_retention_thread():
+    global _retention_thread_started
+    if _retention_thread_started:
+        return
+    _retention_thread_started = True
+    if RETENTION_DAYS <= 0:
+        print("[Retention] RETENTION_DAYS is not set, so nothing is deleted automatically. "
+              "Set it to match the number of days stated on the website.", flush=True)
+        return
+    threading.Thread(target=retention_worker_loop, daemon=True).start()
+    print(f"[Retention] Started. Deleting submissions older than {RETENTION_DAYS} days.", flush=True)
+
+
+_catch_up_started = False
+
+
+def start_auto_review_catch_up():
+    """Review screenshots that arrived before automatic review was switched on."""
+    global _catch_up_started
+    if _catch_up_started:
+        return
+    _catch_up_started = True
+    if not auto_review.is_enabled():
+        print("[AutoReview] ANTHROPIC_API_KEY is not set, so screenshots wait for a manual review.", flush=True)
+        return
+    print(f"[AutoReview] On, using {auto_review.CLAUDE_MODEL}.", flush=True)
+    threading.Thread(target=auto_review.review_pending, daemon=True).start()
+
+
 _threads_pid = None
 
 
@@ -985,12 +1235,17 @@ def start_background_threads():
     # Background threads belong to one process. If this is a different
     # (forked) process from the one that started them, start them afresh here.
     global _threads_pid, _auto_send_thread_started, _inbox_worker_thread_started
+    global _retention_thread_started, _catch_up_started
     if _threads_pid != os.getpid():
         _threads_pid = os.getpid()
         _auto_send_thread_started = False
         _inbox_worker_thread_started = False
+        _retention_thread_started = False
+        _catch_up_started = False
     start_auto_send_thread()
     start_inbox_worker_thread()
+    start_retention_thread()
+    start_auto_review_catch_up()
 
 
 def get_filter_counts():
@@ -1004,6 +1259,8 @@ def get_filter_counts():
             SUM(CASE WHEN LOWER(COALESCE(response_status, '')) = 'sent' THEN 1 ELSE 0 END) AS sent,
             SUM(CASE WHEN submission_type = 'direct' OR LOWER(COALESCE(response_status, '')) = 'held' THEN 1 ELSE 0 END) AS direct,
             SUM(CASE WHEN LOWER(COALESCE(response_status, '')) = 'failed' THEN 1 ELSE 0 END) AS failed,
+            SUM(CASE WHEN LOWER(COALESCE(response_status, '')) = 'manual' THEN 1 ELSE 0 END) AS manual,
+            SUM(CASE WHEN submission_type = 'web_form' THEN 1 ELSE 0 END) AS web_form,
             SUM(CASE WHEN LOWER(risk_rating) = 'high risk' THEN 1 ELSE 0 END) AS high,
             SUM(CASE WHEN LOWER(risk_rating) = 'needs attention' THEN 1 ELSE 0 END) AS attention,
             SUM(CASE WHEN LOWER(risk_rating) = 'low risk' THEN 1 ELSE 0 END) AS low
@@ -1019,6 +1276,8 @@ def get_filter_counts():
         "sent": row["sent"] or 0,
         "direct": row["direct"] or 0,
         "failed": row["failed"] or 0,
+        "manual": row["manual"] or 0,
+        "web_form": row["web_form"] or 0,
         "high": row["high"] or 0,
         "attention": row["attention"] or 0,
         "low": row["low"] or 0,
@@ -1047,6 +1306,10 @@ def get_submissions(filter_value):
         query += " AND LOWER(COALESCE(response_status, 'draft'))='failed'"
     elif filter_value == "pending":
         query += " AND LOWER(COALESCE(response_status, 'draft')) IN ('draft', 'sending')"
+    elif filter_value == "manual":
+        query += " AND LOWER(COALESCE(response_status, ''))='manual'"
+    elif filter_value == "web_form":
+        query += " AND submission_type = 'web_form'"
     elif filter_value == "direct":
         query += " AND (submission_type = 'direct' OR LOWER(COALESCE(response_status, '')) = 'held')"
 
@@ -1086,7 +1349,9 @@ if not _RUNNING_UNDER_GUNICORN and (
 # Login and CSRF protection
 # ------------------------------------------------------------------
 
-PUBLIC_ENDPOINTS = {"login", "static"}
+PUBLIC_ENDPOINTS = {"login", "static", "intake", "health"}
+# Posted from the public website, which cannot hold a dashboard session token.
+CSRF_EXEMPT_ENDPOINTS = {"intake"}
 
 
 def get_csrf_token():
@@ -1099,7 +1364,11 @@ def get_csrf_token():
 
 app.jinja_env.globals["csrf_token"] = get_csrf_token
 app.jinja_env.globals["auto_send_enabled"] = AUTO_SEND_ENABLED
+app.jinja_env.globals["brand_name"] = BRAND_NAME
 app.jinja_env.globals["is_marketing"] = reply_advice.is_marketing
+app.jinja_env.globals["reference_prefix"] = REFERENCE_PREFIX
+app.jinja_env.globals["retention_days"] = RETENTION_DAYS
+app.jinja_env.globals["auto_review_enabled"] = auto_review.is_enabled()
 
 
 @app.template_filter("clean_sender")
@@ -1122,7 +1391,7 @@ def require_login_and_csrf():
     # logged-out visits and health checks, before any redirect can skip it.
     warm_background_threads()
 
-    if request.method == "POST":
+    if request.method == "POST" and request.endpoint not in CSRF_EXEMPT_ENDPOINTS:
         sent_token = request.form.get("csrf_token", "")
         expected = session.get("csrf_token", "")
         if not expected or not hmac.compare_digest(sent_token, expected):
@@ -1135,6 +1404,57 @@ def require_login_and_csrf():
         return redirect(url_for("login", next=request.path))
 
     return None
+
+
+# ------------------------------------------------------------------
+# Hang watchdog: if a request runs longer than 20 seconds, write every
+# thread's stack to the log so we can see exactly what it is waiting on.
+# ------------------------------------------------------------------
+import traceback as _traceback
+
+_active_requests = {}
+_active_lock = threading.Lock()
+_watchdog_started = False
+_last_dump = 0.0
+
+
+def _watchdog_loop():
+    global _last_dump
+    while True:
+        time.sleep(5)
+        now_ts = time.time()
+        with _active_lock:
+            slow = [(tid, path, now_ts - started) for tid, (path, started) in _active_requests.items()
+                    if now_ts - started > 20]
+        if slow and now_ts - _last_dump > 60:
+            _last_dump = now_ts
+            frames = sys._current_frames()
+            names = {t.ident: t.name for t in threading.enumerate()}
+            lines = [f"[Watchdog] Slow requests: {[(p, round(d)) for _, p, d in slow]}"]
+            for ident, frame in frames.items():
+                lines.append(f"[Watchdog] --- thread {names.get(ident, ident)} ---")
+                lines.extend("[Watchdog] " + l.rstrip() for l in "".join(_traceback.format_stack(frame)).splitlines())
+            print("\n".join(lines), flush=True)
+
+
+def _start_watchdog():
+    global _watchdog_started
+    if not _watchdog_started:
+        _watchdog_started = True
+        threading.Thread(target=_watchdog_loop, daemon=True, name="watchdog").start()
+
+
+@app.before_request
+def _track_request_start():
+    _start_watchdog()
+    with _active_lock:
+        _active_requests[threading.get_ident()] = (request.path, time.time())
+
+
+@app.teardown_request
+def _track_request_end(_exc=None):
+    with _active_lock:
+        _active_requests.pop(threading.get_ident(), None)
 
 
 @app.after_request
@@ -1226,6 +1546,25 @@ def submission_detail(submission_id):
             flash(message, "success" if success else "error")
             return redirect(url_for("submission_detail", submission_id=submission_id))
 
+        if action == "auto_review":
+            success, message = auto_review.review_submission(submission_id, force=True)
+            flash(message, "success" if success else "error")
+            return redirect(url_for("submission_detail", submission_id=submission_id))
+
+        if action == "save_reply":
+            success, message = save_manual_reply(submission_id, request.form)
+            flash(message, "success" if success else "error")
+            return redirect(url_for("submission_detail", submission_id=submission_id))
+
+        if action == "delete":
+            if request.form.get("confirm_delete") != "yes":
+                flash("Tick the box to confirm deletion.", "error")
+                return redirect(url_for("submission_detail", submission_id=submission_id))
+            reference = make_reference_code(submission_id)
+            delete_submission(submission_id)
+            flash(f"{reference} and its files have been deleted.", "success")
+            return redirect(url_for("dashboard"))
+
         if action == "mark_correct":
             set_review_status(submission_id, "correct")
             flash("Saved: verdict is correct.", "success")
@@ -1255,6 +1594,225 @@ def submission_detail(submission_id):
         counts=get_filter_counts(),
         active_filter="",
     )
+
+
+# ------------------------------------------------------------------
+# Public web-form intake (the website's "Get it checked" form posts here)
+# ------------------------------------------------------------------
+
+INTAKE_CHANNELS = [
+    "Facebook or Messenger",
+    "WhatsApp",
+    "Text message (SMS)",
+    "Email",
+    "Phone call",
+    "Other",
+]
+INTAKE_RATE_LIMIT = int(os.getenv("INTAKE_RATE_LIMIT", "5"))  # per address, per hour
+_intake_hits = {}
+_intake_lock = threading.Lock()
+EMAIL_PATTERN = re.compile(r"^[^@\s]{1,64}@[^@\s]+\.[^@\s]{2,}$")
+
+
+def _client_address():
+    return request.headers.get("X-Forwarded-For", request.remote_addr or "").split(",")[0].strip()
+
+
+def _intake_allowed(client):
+    """Simple in-memory limit so one address can't flood the review queue."""
+    now_ts = time.time()
+    with _intake_lock:
+        hits = [t for t in _intake_hits.get(client, []) if now_ts - t < 3600]
+        if len(hits) >= INTAKE_RATE_LIMIT:
+            _intake_hits[client] = hits
+            return False
+        hits.append(now_ts)
+        _intake_hits[client] = hits
+        return True
+
+
+def _back_to_site(state):
+    # The website reads ?submitted=... and shows a matching message.
+    return redirect(f"{SITE_URL}/?submitted={state}#check", code=303)
+
+
+@app.route("/intake", methods=["POST"])
+def intake():
+    # Honeypot: real people never see or fill the "website" field.
+    if request.form.get("website"):
+        return _back_to_site("ok")
+
+    if not _intake_allowed(_client_address()):
+        return _back_to_site("busy")
+
+    email_address = (request.form.get("email") or "").strip()
+    if len(email_address) > 254 or not EMAIL_PATTERN.match(email_address):
+        return _back_to_site("email")
+
+    country = re.sub(r"\s+", " ", (request.form.get("country") or "")).strip()[:80]
+    if not country:
+        country = DEFAULT_COUNTRY
+    channel = (request.form.get("channel") or "").strip()
+    if not channel:
+        channel = "Not stated"
+    elif channel not in INTAKE_CHANNELS:
+        channel = "Other"
+    notes = (request.form.get("notes") or "").strip()[:4000]
+
+    chosen = [f for f in request.files.getlist("screenshot") if f and f.filename]
+    if len(chosen) > MAX_SCREENSHOTS:
+        return _back_to_site("toomany")
+
+    stored_files = []
+    for upload in chosen:
+        data = upload.read(MAX_UPLOAD_MB * 1024 * 1024 + 1)
+        saved_name = uploads.save_image(data)
+        if not saved_name:
+            # Don't keep half a submission: remove any already saved.
+            uploads.delete_files(stored_files)
+            return _back_to_site("file")
+        stored_files.append(saved_name)
+    stored = bool(stored_files)
+
+    if not stored and not notes:
+        return _back_to_site("empty")
+
+    subject = " · ".join(["Website form"] + ([channel] if channel != "Not stated" else []) + ([country] if country else []))
+    message_id = f"web-{uuid.uuid4()}"
+    database.insert_submission(
+        message_id=message_id,
+        received_at=now(),
+        from_header="",
+        subject=subject,
+        body=notes,
+        risk_score=0,
+        risk_rating="Manual review",
+        summary="Submitted through the website form.",
+        human_summary="Submitted through the website form. A reviewer needs to look at the screenshot and write the reply.",
+        findings=[],
+        recommended_action="",
+        proposed_response="",
+        should_reply=True,
+        submitter_email=email_address,
+        submitter_from_header=email_address,
+        has_attachments=1 if stored else 0,
+        attachment_names=(
+            ["Screenshot"] if len(stored_files) == 1
+            else [f"Screenshot {i}" for i in range(1, len(stored_files) + 1)]
+        ),
+        submission_type="web_form",
+        forward_method="form",
+        review_checks=[],
+        country=country,
+        channel=channel,
+        screenshot_files=stored_files,
+        needs_manual_review=True,
+    )
+    print(f"[Intake] Website submission received ({channel}{', ' + country if country else ''}).", flush=True)
+
+    if stored:
+        saved = database.get_submission_by_message_id(message_id)
+        if saved:
+            auto_review.review_in_background(saved["id"])
+    return _back_to_site("ok")
+
+
+@app.errorhandler(413)
+def upload_too_large(_error):
+    if request.endpoint == "intake" or request.path == "/intake":
+        return _back_to_site("file")
+    return "That upload is too large.", 413
+
+
+@app.route("/health")
+def health():
+    return {"ok": True}
+
+
+@app.route("/submission/<int:submission_id>/screenshot/<name>")
+def submission_screenshot(submission_id, name):
+    submission = get_submission(submission_id)
+    if not submission or name not in submission.get("screenshot_files", []):
+        abort(404)
+    path = uploads.file_path(name)
+    if not path or not os.path.exists(path):
+        abort(404)
+    response = send_file(path, mimetype=uploads.mime_type(name), max_age=0)
+    response.headers["Content-Security-Policy"] = "default-src 'none'; img-src 'self'"
+    response.headers["Cache-Control"] = "private, no-store"
+    return response
+
+
+# ------------------------------------------------------------------
+# Writing replies by hand, and deleting submissions
+# ------------------------------------------------------------------
+
+RATING_SCORES = {"High Risk": 85, "Needs Attention": 50, "Low Risk": 15}
+
+
+def save_manual_reply(submission_id, form):
+    rating = form.get("risk_rating") or ""
+    if rating not in RATING_SCORES:
+        return False, "Choose an assessment."
+    action = (form.get("recommended_action") or "").strip()[:1500]
+    if not action:
+        return False, "Add what the person should do."
+    scam_type = (form.get("scam_type") or "").strip()[:120]
+    findings = [
+        line.strip(" -•\t")[:300]
+        for line in (form.get("findings") or "").splitlines()
+        if line.strip(" -•\t")
+    ][:8]
+
+    conn = get_connection()
+    conn.execute(
+        """
+        UPDATE submissions
+        SET risk_rating = ?,
+            risk_score = ?,
+            scam_type = ?,
+            recommended_action = ?,
+            human_summary = ?,
+            proposed_response = ?,
+            findings = ?,
+            findings_count = ?,
+            response_status = CASE
+                WHEN LOWER(COALESCE(response_status, 'draft')) = 'manual' THEN 'draft'
+                ELSE response_status
+            END
+        WHERE id = ?
+          AND LOWER(COALESCE(response_status, 'draft')) NOT IN ('sent', 'sending')
+        """,
+        (rating, RATING_SCORES[rating], scam_type or None, action, action, action,
+         json.dumps(findings), len(findings), submission_id),
+    )
+    conn.commit()
+    conn.close()
+    return True, "Reply saved. Check the preview below, then send it."
+
+
+def delete_submission(submission_id):
+    """Remove a submission, its screenshots and (best effort) the inbox email."""
+    submission = get_submission(submission_id)
+    if not submission:
+        return False
+
+    uploads.delete_files(submission.get("screenshot_files"))
+
+    message_id = submission.get("message_id") or ""
+    if message_id and not message_id.startswith("web-"):
+        try:
+            import email_reader
+            email_reader.delete_messages_by_id([message_id])
+        except Exception as exc:
+            print(f"[Delete] Could not remove inbox email for #{submission_id}: {exc}", flush=True)
+
+    conn = get_connection()
+    conn.execute("DELETE FROM submissions WHERE id = ?", (submission_id,))
+    conn.commit()
+    conn.close()
+    set_review_status(submission_id, "unreviewed")
+    return True
 
 
 if __name__ == "__main__":

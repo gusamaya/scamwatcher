@@ -116,9 +116,16 @@ def _official_site(brand):
     return domains[0] if domains else ""
 
 
+# Online accounts people "use" rather than are a "customer" of. They have no
+# bill or phone line to call, so the advice points to the app only.
+ONLINE_ACCOUNT_BRANDS = {"Facebook", "Instagram", "WhatsApp", "Google", "Microsoft", "Apple", "Netflix", "TikTok"}
+
+
 def _relationship(brand):
     if brand in GOVERNMENT_BRANDS:
         return f"If you deal with {_name(brand)}"
+    if brand in ONLINE_ACCOUNT_BRANDS:
+        return f"If you use {brand}"
     return f"If you're a {brand} customer"
 
 
@@ -129,6 +136,8 @@ def _contact_step(brand, action="check your account"):
     site = _official_site(brand)
     where = f"open the {brand} app or type {site} into your browser" if site else \
         f"open the {brand} app or type their website address into your browser yourself"
+    if brand in ONLINE_ACCOUNT_BRANDS:
+        return f"{_relationship(brand)}, {where} to {action}."
     phone = "the number on the back of your card" if brand in BANK_BRANDS else "the number on your bill or their website"
     return f"{_relationship(brand)}, {where} to {action}. Or call {phone}."
 
@@ -164,14 +173,17 @@ def build(submission, money_contact="your bank"):
         steps += [
             _contact_step(brand, "check your account and pay"),
             "Don't click the links or call the phone number in it, just to be safe.",
-            f"If you're not a {brand} customer, it isn't meant for you. Delete it."
+            (f"If you don't use {brand}, it isn't meant for you. Delete it." if brand in ONLINE_ACCOUNT_BRANDS
+             else f"If you're not a {brand} customer, it isn't meant for you. Delete it.")
             if brand not in GOVERNMENT_BRANDS else
             f"If you don't deal with {_name(brand)}, it isn't meant for you. Delete it.",
         ]
     elif "high" in rating:
         tone = "high"
         headline = f"This looks like a scam pretending to be {_name(brand)}." if brand else "This looks like a scam."
-        steps.append("Don't click the links, reply, call any number in it, or pay anything.")
+        if not specific:
+            # Advice written for this message already says what not to do.
+            steps.append("Don't click the links, reply, call any number in it, or pay anything.")
         if brand:
             steps.append(_contact_step(brand, "check your account"))
         steps.append("Then delete the message.")
