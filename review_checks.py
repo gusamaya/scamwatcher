@@ -354,6 +354,9 @@ FILLER_WORDS = {
     "refund", "refunds", "rebate", "rebates", "notice", "notices", "office",
     "enquiries", "compliance", "debt", "recovery", "claims", "fines", "tolls",
     "member", "members", "rewards", "id", "pay", "secure", "assistance",
+    "card", "cards", "statement", "statements", "transaction", "transactions",
+    "purchase", "purchases", "order", "orders", "message", "messages", "infos",
+    "news", "digital", "mobile", "app", "system", "automated", "auto", "desk",
 }
 
 
@@ -373,6 +376,27 @@ def brand_claimed_by_display_name(display_name):
                 remainder = text.replace(f" {name} ", " ").split()
                 if all(word in FILLER_WORDS or word.isdigit() for word in remainder):
                     return brand
+    return ""
+
+
+def brand_named_in_display(display_name):
+    """A brand named anywhere in the display name, e.g. "NAB Card Notifications"
+    or "Telstra Billing Team AU". Short names that are also ordinary words
+    (nab, anz, ato...) only count when written in capitals, as organisations
+    write them; "apple", "meta", "outlook" and "origin" only count through
+    brand_claimed_by_display_name, so "Big Apple Pizza" isn't Apple."""
+    raw = display_name or ""
+    lowered = " " + re.sub(r"[^a-z0-9. ]", " ", raw.lower()) + " "
+    for brand, info in BRANDS.items():
+        for name in info["names"]:
+            if name in {"apple", "meta", "outlook", "origin"}:
+                continue
+            if name in AMBIGUOUS_NAMES:
+                if re.search(rf"(?<![A-Za-z0-9]){re.escape(name.upper())}(?![A-Za-z0-9])", raw):
+                    return brand
+                continue
+            if f" {name} " in lowered:
+                return brand
     return ""
 
 
@@ -454,7 +478,7 @@ def check_sender(from_header, reply_to="", auth_results=None, submission_type=""
         levels.append("fail")
 
     # Brand claimed by display name or imitated by the domain
-    claimed_brand = brand_claimed_by_display_name(display)
+    claimed_brand = brand_claimed_by_display_name(display) or brand_named_in_display(display)
     imitated_brand = brand_imitated_by_domain(domain)
 
     if claimed_brand:
@@ -601,6 +625,10 @@ CONTENT_SIGNALS = [
     ("callback", "caution", "Asks you to call a phone number", [
         r"\b(call|phone|ring|contact)( us)?( now| immediately| on| at)?\s*:?\s*(\+?61|0|1[38]00)[\d \-]{7,}",
         r"\b(call|phone|ring) (our|the) (support|helpline|help desk|billing|fraud) (team|line|department)\b",
+        r"\b(call|phone|ring|contact|support|helpline)\b[^0-9\n]{0,20}(\+?61 ?4|04)\d{2}[ \d]{6,9}",
+    ]),
+    ("mobile_contact", "caution", "Gives a mobile phone number as the organisation's contact (banks and large companies don't)", [
+        r"\b(support|helpline|customer service|fraud team|security team|contact us|call us)\b[^0-9\n]{0,20}(\+?61 ?4|04)\d{2}[ \d]{6,9}",
     ]),
     ("remote_access", "fail", "Asks you to install remote-access software", [
         r"\banydesk\b", r"\bteamviewer\b", r"\bultraviewer\b", r"\bquick ?assist\b", r"\bremote (access|desktop|support) (app|software|tool)\b",
@@ -865,7 +893,9 @@ SCAM_PATTERNS = [
             [r"\bbank\b", r"\bcommbank\b", r"\bnetbank\b", r"\bwestpac\b", r"\banz\b", r"\bnab\b", r"\bst\.? ?george\b", r"\bsuncorp\b", r"\bbendigo\b", r"\bpaypal\b", r"\bcard\b"],
             [r"\b(account|card) (has been |is |will be )?(suspended|locked|restricted|frozen|blocked|limited|on hold)\b", r"\bunusual (activity|sign[- ]?in|login|transaction)",
              r"\bsuspicious (activity|transaction|login|sign[- ]?in)", r"\bverify your (identity|account|details)\b", r"\bsecurity (alert|check|update)\b",
-             r"\bunauthori[sz]ed (transaction|access|payment)\b", r"\bnew payee\b", r"\bconfirm (this|the) (transaction|payment)\b"],
+             r"\bunauthori[sz]ed (transaction|access|payment)\b", r"\bnew payee\b", r"\bconfirm (this|the) (transaction|payment)\b",
+             r"\bsecurity checks?\b", r"\b(payment|transaction|purchase) (is |has been |was )?(currently )?(on hold|paused|pending review|declined|blocked|flagged)\b",
+             r"\bpaused (a |the |your )?(recent )?(transaction|payment|purchase)\b", r"\bsecure your (account|card)\b"],
         ],
         "official_brands": ["CommBank", "Westpac", "ANZ", "NAB", "St.George", "Suncorp", "Bendigo Bank", "PayPal"],
         "advice": "Call your bank on the number on the back of your card, or open your banking app directly. Banks will not ask you to confirm details through an email link.",

@@ -122,11 +122,15 @@ def _relationship(brand):
     return f"If you're a {brand} customer"
 
 
+BANK_BRANDS = {"CommBank", "Westpac", "ANZ", "NAB", "St.George", "Bendigo Bank", "Suncorp", "BSP", "Kiwibank", "ASB", "BNZ"}
+
+
 def _contact_step(brand, action="check your account"):
     site = _official_site(brand)
     where = f"open the {brand} app or type {site} into your browser" if site else \
         f"open the {brand} app or type their website address into your browser yourself"
-    return f"{_relationship(brand)}, {where} to {action}. Or call the number on your bill or their website."
+    phone = "the number on the back of your card" if brand in BANK_BRANDS else "the number on your bill or their website"
+    return f"{_relationship(brand)}, {where} to {action}. Or call {phone}."
 
 
 def build(submission, money_contact="your bank"):
