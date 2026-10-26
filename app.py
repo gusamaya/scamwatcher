@@ -14,6 +14,8 @@ from email.message import EmailMessage
 from flask import Flask, render_template, request, redirect, url_for, abort, flash, session
 from dotenv import load_dotenv
 
+import reply_advice
+
 load_dotenv()
 
 # Write log lines immediately. Without this, output from background threads can
@@ -333,6 +335,9 @@ def ensure_schema():
         "review_checks": "TEXT",
         "scam_type": "TEXT",
         "scam_category": "TEXT",
+        "verdict_note": "TEXT",
+        "brand": "TEXT",
+        "message_kind": "TEXT",
     }
 
     for column_name, column_type in required_columns.items():
@@ -541,6 +546,11 @@ def build_html_email(submission):
         guidance_strong = "We recommend not taking action until this request has been independently verified."
         guidance = "Verify any request using contact details sourced independently from the email, and do not rely on any attachment without verification."
 
+    if submission.get("verdict_note"):
+        # Genuine-looking email: the safe habit, not a scam warning.
+        guidance_strong = "Go to the organisation directly rather than through the email."
+        guidance = "Use their official app, or type their website address yourself, and use the phone number printed on their website or your bill."
+
     original_from = html_escape(submission.get("from_header") or "Unknown sender")
     original_subject = html_escape(submission.get("subject") or "(No subject)")
     original_received = html_escape(submission.get("received_at") or "Unknown")
@@ -582,6 +592,15 @@ def build_html_email(submission):
             </div>
             """
 
+    genuine_box = ""
+    if submission.get("verdict_note"):
+        genuine_box = f"""
+            <div style="background:#f0fdf4; border:1px solid #bbf7d0; border-radius:10px; padding:12px 14px; margin:0 0 18px 0; color:#166534; font-size:14px; line-height:1.6;">
+                <strong>{html_escape(submission.get("verdict_note"))}</strong>
+                {"" if reply_advice.is_marketing(submission) else "That still doesn't make the links or phone number in it safe to use, so follow the advice above."}
+            </div>
+        """
+
     scam_type_box = ""
     if submission.get("scam_type"):
         scam_type_box = f"""
@@ -614,28 +633,23 @@ def build_html_email(submission):
             <div style="font-size:14px; color:#111827; margin-bottom:10px;">Hi there,</div>
 
             <div style="font-size:14px; color:#111827; margin-bottom:18px;">
-                You requested this review via ScamWatcher — outcome details are below.
+                You requested this review via ScamWatcher. Here is our advice.
             </div>
 
-            <div style="font-size:13px; color:#6b7280; margin-bottom:18px;">
-                Reference: <strong>{html_escape(reference_code)}</strong>
+            {reply_advice.html_box(submission)}
+
+            <div style="border-top:1px solid #e5e7eb; padding-top:16px; font-size:16px; font-weight:700; color:#111827; margin-bottom:12px;">
+                Why we think this
             </div>
 
-            <div style="font-size:14px; font-weight:700; color:#111827; margin-bottom:4px;">
-                Assessment result:
-            </div>
-            <div style="font-size:14px; font-weight:700; color:{risk_color}; margin-bottom:14px;">
-                {html_escape(risk)}.
+            <div style="font-size:13px; color:#6b7280; margin-bottom:14px;">
+                Reference: <strong>{html_escape(reference_code)}</strong> &middot;
+                Assessment result: <strong style="color:{risk_color};">{html_escape(risk)}</strong>
             </div>
 
             {scam_type_box}
 
-            <div style="font-size:14px; font-weight:700; color:#111827; margin-bottom:4px;">
-                Recommended Action:
-            </div>
-            <div style="font-size:14px; font-weight:700; color:#0f4c8a; margin-bottom:28px;">
-                {html_escape(action)}
-            </div>
+            {genuine_box}
 
             {checks_box}
 
@@ -650,15 +664,7 @@ def build_html_email(submission):
 
             {tip_box}
 
-            <div style="font-size:14px; line-height:1.7; font-weight:700; font-style:italic; color:#111827; margin-bottom:12px;">
-                {html_escape(guidance_strong)}
-            </div>
-
-            <div style="font-size:14px; line-height:1.7; color:#111827; margin-bottom:34px;">
-                {html_escape(guidance)}
-            </div>
-
-            <div style="font-size:14px; color:#111827; margin-bottom:10px;">Regards,</div>
+            <div style="font-size:14px; color:#111827; margin:12px 0 10px;">Regards,</div>
             <div style="font-size:14px; font-weight:700; color:#111827;">Serena</div>
             <div style="font-size:14px; color:#111827; margin-top:6px;">ScamWatcher Advisor</div>
             <div style="font-size:12px; color:#111827; margin-top:8px;">
@@ -857,7 +863,7 @@ def send_submission_response(submission_id, manual=False):
         send_email(
             to=to_email,
             subject=f"ScamWatcher Review – {reference_code} – {original_subject}",
-            body=submission.get("proposed_response") or "ScamWatcher review attached.",
+            body="\n".join(reply_advice.text_block(submission)) + "\n\n" + (submission.get("proposed_response") or ""),
             html_body=html_body,
             bcc=AUDIT_BCC_EMAIL,
         )
@@ -972,7 +978,17 @@ def start_inbox_worker_thread():
     print("[InboxWorker] Embedded worker thread started.")
 
 
+_threads_pid = None
+
+
 def start_background_threads():
+    # Background threads belong to one process. If this is a different
+    # (forked) process from the one that started them, start them afresh here.
+    global _threads_pid, _auto_send_thread_started, _inbox_worker_thread_started
+    if _threads_pid != os.getpid():
+        _threads_pid = os.getpid()
+        _auto_send_thread_started = False
+        _inbox_worker_thread_started = False
     start_auto_send_thread()
     start_inbox_worker_thread()
 
@@ -1051,10 +1067,18 @@ def get_submissions(filter_value):
 
 ensure_schema()
 
-# Start the inbox checker and auto-sender as soon as the app loads, so emails
-# are processed even if nobody has opened the dashboard since the last deploy.
-# (Under the Flask debug reloader, only the child process starts them.)
-if os.environ.get("WERKZEUG_RUN_MAIN") == "true" or not os.environ.get("FLASK_DEBUG"):
+# Under gunicorn this module is imported in the parent process, which then
+# forks the process that serves requests. Threads must not be started before
+# that fork: a thread caught inside SQLite at the moment of the fork leaves
+# SQLite's internal lock taken in the child for ever, and every database call
+# there hangs. So under gunicorn the threads start in the serving process, on
+# its first request (Render's health check arrives within seconds of start-up).
+_RUNNING_UNDER_GUNICORN = "gunicorn" in os.path.basename(sys.argv[0] if sys.argv else "")
+
+if not _RUNNING_UNDER_GUNICORN and (
+    os.environ.get("WERKZEUG_RUN_MAIN") == "true" or not os.environ.get("FLASK_DEBUG")
+):
+    # Plain `python app.py` or the Flask reloader child: no fork follows.
     start_background_threads()
 
 
@@ -1075,6 +1099,7 @@ def get_csrf_token():
 
 app.jinja_env.globals["csrf_token"] = get_csrf_token
 app.jinja_env.globals["auto_send_enabled"] = AUTO_SEND_ENABLED
+app.jinja_env.globals["is_marketing"] = reply_advice.is_marketing
 
 
 @app.template_filter("clean_sender")

@@ -270,6 +270,23 @@ def is_official(host, brand):
     return any(host == d or host.endswith("." + d) for d in BRANDS[brand]["domains"])
 
 
+def official_brand_of(host):
+    """The brand a host officially belongs to (telstra.com.au -> Telstra), or ""."""
+    for brand in BRANDS:
+        if is_official(host, brand):
+            return brand
+    return ""
+
+
+def same_organisation(host_a, host_b):
+    """True when two hosts belong to the same organisation, e.g. telstra.com
+    and telstra.com.au, or two official domains of one brand."""
+    if registrable_domain(host_a) == registrable_domain(host_b):
+        return True
+    brand_a = official_brand_of(host_a)
+    return bool(brand_a) and is_official(host_b, brand_a)
+
+
 def _domain_tokens(host):
     return set(t for t in re.split(r"[.\-_]", (host or "").lower()) if t)
 
@@ -337,6 +354,9 @@ FILLER_WORDS = {
     "refund", "refunds", "rebate", "rebates", "notice", "notices", "office",
     "enquiries", "compliance", "debt", "recovery", "claims", "fines", "tolls",
     "member", "members", "rewards", "id", "pay", "secure", "assistance",
+    "card", "cards", "statement", "statements", "transaction", "transactions",
+    "purchase", "purchases", "order", "orders", "message", "messages", "infos",
+    "news", "digital", "mobile", "app", "system", "automated", "auto", "desk",
 }
 
 
@@ -356,6 +376,27 @@ def brand_claimed_by_display_name(display_name):
                 remainder = text.replace(f" {name} ", " ").split()
                 if all(word in FILLER_WORDS or word.isdigit() for word in remainder):
                     return brand
+    return ""
+
+
+def brand_named_in_display(display_name):
+    """A brand named anywhere in the display name, e.g. "NAB Card Notifications"
+    or "Telstra Billing Team AU". Short names that are also ordinary words
+    (nab, anz, ato...) only count when written in capitals, as organisations
+    write them; "apple", "meta", "outlook" and "origin" only count through
+    brand_claimed_by_display_name, so "Big Apple Pizza" isn't Apple."""
+    raw = display_name or ""
+    lowered = " " + re.sub(r"[^a-z0-9. ]", " ", raw.lower()) + " "
+    for brand, info in BRANDS.items():
+        for name in info["names"]:
+            if name in {"apple", "meta", "outlook", "origin"}:
+                continue
+            if name in AMBIGUOUS_NAMES:
+                if re.search(rf"(?<![A-Za-z0-9]){re.escape(name.upper())}(?![A-Za-z0-9])", raw):
+                    return brand
+                continue
+            if f" {name} " in lowered:
+                return brand
     return ""
 
 
@@ -437,7 +478,7 @@ def check_sender(from_header, reply_to="", auth_results=None, submission_type=""
         levels.append("fail")
 
     # Brand claimed by display name or imitated by the domain
-    claimed_brand = brand_claimed_by_display_name(display)
+    claimed_brand = brand_claimed_by_display_name(display) or brand_named_in_display(display)
     imitated_brand = brand_imitated_by_domain(domain)
 
     if claimed_brand:
@@ -584,6 +625,10 @@ CONTENT_SIGNALS = [
     ("callback", "caution", "Asks you to call a phone number", [
         r"\b(call|phone|ring|contact)( us)?( now| immediately| on| at)?\s*:?\s*(\+?61|0|1[38]00)[\d \-]{7,}",
         r"\b(call|phone|ring) (our|the) (support|helpline|help desk|billing|fraud) (team|line|department)\b",
+        r"\b(call|phone|ring|contact|support|helpline)\b[^0-9\n]{0,20}(\+?61 ?4|04)\d{2}[ \d]{6,9}",
+    ]),
+    ("mobile_contact", "caution", "Gives a mobile phone number as the organisation's contact (banks and large companies don't)", [
+        r"\b(support|helpline|customer service|fraud team|security team|contact us|call us)\b[^0-9\n]{0,20}(\+?61 ?4|04)\d{2}[ \d]{6,9}",
     ]),
     ("remote_access", "fail", "Asks you to install remote-access software", [
         r"\banydesk\b", r"\bteamviewer\b", r"\bultraviewer\b", r"\bquick ?assist\b", r"\bremote (access|desktop|support) (app|software|tool)\b",
@@ -718,6 +763,9 @@ def check_links(body, html_links=None, sender_domain="", claimed_brand="", conte
         elif claimed_brand and not is_official(host, claimed_brand) and host not in URL_SHORTENERS:
             if any(reg == registrable_domain(d) for d in BRANDS[claimed_brand]["domains"]):
                 pass
+            elif content_signals & {"payment", "credentials", "sensitive", "bank_change"}:
+                # Asking you to pay or sign in on someone else's website is the scam.
+                problems.append(("fail", f"The email claims to be from {claimed_brand} and asks you to pay or sign in, but this link goes to {host}, not {claimed_brand}."))
             else:
                 problems.append(("caution", f"The email claims to be from {claimed_brand}, but this link goes to {host}."))
 
@@ -728,7 +776,7 @@ def check_links(body, html_links=None, sender_domain="", claimed_brand="", conte
             shown_host = re.sub(r"^www\.", "", shown.group(1))
             shown_tld = tld_of(shown_host)
             looks_like_domain = shown_tld in {"com", "au", "net", "org", "gov", "io", "co", "uk", "nz", "info", "biz", "app"} or shown_tld in SUSPICIOUS_TLDS
-            if looks_like_domain and registrable_domain(shown_host) != reg:
+            if looks_like_domain and registrable_domain(shown_host) != reg and not same_organisation(shown_host, host):
                 problems.append(("fail", f'The link text shows "{shown.group(0)}" but actually goes to {host}.'))
 
         if host in URL_SHORTENERS or reg in URL_SHORTENERS:
@@ -845,7 +893,9 @@ SCAM_PATTERNS = [
             [r"\bbank\b", r"\bcommbank\b", r"\bnetbank\b", r"\bwestpac\b", r"\banz\b", r"\bnab\b", r"\bst\.? ?george\b", r"\bsuncorp\b", r"\bbendigo\b", r"\bpaypal\b", r"\bcard\b"],
             [r"\b(account|card) (has been |is |will be )?(suspended|locked|restricted|frozen|blocked|limited|on hold)\b", r"\bunusual (activity|sign[- ]?in|login|transaction)",
              r"\bsuspicious (activity|transaction|login|sign[- ]?in)", r"\bverify your (identity|account|details)\b", r"\bsecurity (alert|check|update)\b",
-             r"\bunauthori[sz]ed (transaction|access|payment)\b", r"\bnew payee\b", r"\bconfirm (this|the) (transaction|payment)\b"],
+             r"\bunauthori[sz]ed (transaction|access|payment)\b", r"\bnew payee\b", r"\bconfirm (this|the) (transaction|payment)\b",
+             r"\bsecurity checks?\b", r"\b(payment|transaction|purchase) (is |has been |was )?(currently )?(on hold|paused|pending review|declined|blocked|flagged)\b",
+             r"\bpaused (a |the |your )?(recent )?(transaction|payment|purchase)\b", r"\bsecure your (account|card)\b"],
         ],
         "official_brands": ["CommBank", "Westpac", "ANZ", "NAB", "St.George", "Suncorp", "Bendigo Bank", "PayPal"],
         "advice": "Call your bank on the number on the back of your card, or open your banking app directly. Banks will not ask you to confirm details through an email link.",
@@ -1103,6 +1153,36 @@ def run_review(from_header, subject, body, reply_to="", html_links=None, auth_re
         else:
             scam_type, scam_category = "Suspicious email (no specific campaign)", "Other"
 
+    # Does it appear to be genuinely from the organisation it names? The sender
+    # address is an official domain of that brand, the sender check passed, and
+    # every link goes to that brand (or a known email-tracking service).
+    brand = sender.get("claimed_brand", "")
+    sender_domain = sender.get("sender_domain", "")
+    link_domains = links.get("domains") or []
+    links_official = all(
+        is_official(d, brand)
+        or registrable_domain(d) in TRACKING_DOMAINS
+        or any(d.endswith("." + t) for t in TRACKING_DOMAINS)
+        for d in link_domains
+    ) if brand else False
+    appears_genuine = bool(
+        brand
+        and sender_domain
+        and is_official(sender_domain, brand)
+        and statuses["sender"] == "pass"
+        and statuses["links"] != "fail"
+        and links_official
+    )
+    authenticated = bool(auth_results) and (
+        (auth_results or {}).get("dmarc") == "pass"
+        or ((auth_results or {}).get("spf") == "pass" and (auth_results or {}).get("dkim") == "pass")
+    )
+    if appears_genuine:
+        # Keep the warning signs visible, but don't call a real organisation's
+        # email "phishing". The analyzer turns this into "Needs Attention".
+        floor = 0
+        scam_type, scam_category = "", ""
+
     # Tidy, storable version (drop internal-only fields)
     public_checks = [
         {k: c[k] for k in ("key", "title", "status", "headline", "details")}
@@ -1119,4 +1199,8 @@ def run_review(from_header, subject, body, reply_to="", html_links=None, auth_re
         "fail_count": len(fails),
         "caution_count": len(cautions),
         "effective_caution_count": len(effective_cautions),
+        "appears_genuine": appears_genuine,
+        "genuine_brand": brand if appears_genuine else "",
+        "sender_authenticated": authenticated,
+        "content_signals": content.get("signals", []),
     }

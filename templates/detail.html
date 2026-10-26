@@ -37,6 +37,8 @@
                 <div>
                     <p class="verdict-rating is-{{ rk }}">{{ s.risk_rating or 'Low Risk' }}</p>
                     {% if s.scam_type %}<p class="verdict-type">{{ s.scam_type }}</p>{% endif %}
+                    {% if s.verdict_note %}<p class="verdict-genuine">{{ s.verdict_note }}</p>
+                    {% elif is_marketing(s) %}<p class="verdict-genuine">Appears to be marketing (advertising), not a scam.</p>{% endif %}
                     <p class="verdict-action">{{ s.recommended_action or s.human_summary or '' }}</p>
                 </div>
                 <div class="verdict-meter">

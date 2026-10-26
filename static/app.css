@@ -819,3 +819,5 @@ a { color: var(--navy-700); }
 @media (prefers-reduced-motion: reduce) {
     * { transition: none !important; animation: none !important; }
 }
+
+.verdict-genuine { margin: 6px 0 8px; padding: 8px 10px; border-radius: var(--radius-s); background: var(--low-bg); border: 1px solid var(--low-line); color: var(--low); font-size: 13.5px; font-weight: 600; }

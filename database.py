@@ -43,6 +43,9 @@ def ensure_columns():
         "review_checks": "TEXT",
         "scam_type": "TEXT",
         "scam_category": "TEXT",
+        "verdict_note": "TEXT",
+        "brand": "TEXT",
+        "message_kind": "TEXT",
     }
 
     for column_name, column_type in required_columns.items():
@@ -204,6 +207,9 @@ def insert_submission(
     review_checks=None,
     scam_type=None,
     scam_category=None,
+    verdict_note=None,
+    brand=None,
+    message_kind=None,
     **kwargs,
 ):
     if (not from_header) and kwargs.get("sender"):
@@ -266,9 +272,12 @@ def insert_submission(
             forward_method,
             review_checks,
             scam_type,
-            scam_category
+            scam_category,
+            verdict_note,
+            brand,
+            message_kind
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         message_id,
         received_at,
@@ -305,6 +314,9 @@ def insert_submission(
         review_checks_json,
         scam_type or None,
         scam_category or None,
+        verdict_note or None,
+        brand or None,
+        message_kind or None,
     ))
 
     conn.commit()
