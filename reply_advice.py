@@ -12,9 +12,29 @@ directly through its official app or website, and everyone else to delete it.
 import html
 
 try:
+    import review_checks
     from review_checks import BRANDS
 except Exception:  # pragma: no cover
+    review_checks = None
     BRANDS = {}
+
+
+def infer_brand(submission):
+    """Work out the organisation from the sender, for submissions saved before
+    the brand was stored (or where the review didn't record one)."""
+    if review_checks is None:
+        return ""
+    try:
+        display, _address, domain = review_checks.parse_sender(submission.get("from_header") or "")
+        return (
+            review_checks.brand_claimed_by_display_name(display)
+            or review_checks.brand_imitated_by_domain(domain)
+            # A personal Gmail or Outlook address isn't Google or Microsoft.
+            or ("" if domain in review_checks.FREE_EMAIL_PROVIDERS else review_checks.official_brand_of(domain))
+            or ""
+        )
+    except Exception:
+        return ""
 
 # Organisations you "deal with" rather than are a "customer" of.
 GOVERNMENT_BRANDS = {
@@ -63,7 +83,7 @@ def _contact_step(brand, action="check your account"):
 def build(submission, money_contact="your bank"):
     """Return {"tone", "headline", "steps"} for a submission dict."""
     rating = (submission.get("risk_rating") or "").lower()
-    brand = (submission.get("brand") or "").strip()
+    brand = (submission.get("brand") or "").strip() or infer_brand(submission)
     if brand and brand not in BRANDS:
         # Brand named by the screenshot review: still useful, without a site.
         pass
