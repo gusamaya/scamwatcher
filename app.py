@@ -14,6 +14,8 @@ from email.message import EmailMessage
 from flask import Flask, render_template, request, redirect, url_for, abort, flash, session
 from dotenv import load_dotenv
 
+import reply_advice
+
 load_dotenv()
 
 # Write log lines immediately. Without this, output from background threads can
@@ -334,6 +336,7 @@ def ensure_schema():
         "scam_type": "TEXT",
         "scam_category": "TEXT",
         "verdict_note": "TEXT",
+        "brand": "TEXT",
     }
 
     for column_name, column_type in required_columns.items():
@@ -593,7 +596,7 @@ def build_html_email(submission):
         genuine_box = f"""
             <div style="background:#f0fdf4; border:1px solid #bbf7d0; border-radius:10px; padding:12px 14px; margin:0 0 18px 0; color:#166534; font-size:14px; line-height:1.6;">
                 <strong>{html_escape(submission.get("verdict_note"))}</strong>
-                That still doesn't make the links or phone number in it safe to use, so follow the advice below.
+                That still doesn't make the links or phone number in it safe to use, so follow the advice above.
             </div>
         """
 
@@ -629,30 +632,23 @@ def build_html_email(submission):
             <div style="font-size:14px; color:#111827; margin-bottom:10px;">Hi there,</div>
 
             <div style="font-size:14px; color:#111827; margin-bottom:18px;">
-                You requested this review via ScamWatcher — outcome details are below.
+                You requested this review via ScamWatcher. Here is our advice.
             </div>
 
-            <div style="font-size:13px; color:#6b7280; margin-bottom:18px;">
-                Reference: <strong>{html_escape(reference_code)}</strong>
+            {reply_advice.html_box(submission)}
+
+            <div style="border-top:1px solid #e5e7eb; padding-top:16px; font-size:16px; font-weight:700; color:#111827; margin-bottom:12px;">
+                Why we think this
             </div>
 
-            <div style="font-size:14px; font-weight:700; color:#111827; margin-bottom:4px;">
-                Assessment result:
-            </div>
-            <div style="font-size:14px; font-weight:700; color:{risk_color}; margin-bottom:14px;">
-                {html_escape(risk)}.
+            <div style="font-size:13px; color:#6b7280; margin-bottom:14px;">
+                Reference: <strong>{html_escape(reference_code)}</strong> &middot;
+                Assessment result: <strong style="color:{risk_color};">{html_escape(risk)}</strong>
             </div>
 
             {scam_type_box}
 
             {genuine_box}
-
-            <div style="font-size:14px; font-weight:700; color:#111827; margin-bottom:4px;">
-                Recommended Action:
-            </div>
-            <div style="font-size:14px; font-weight:700; color:#0f4c8a; margin-bottom:28px;">
-                {html_escape(action)}
-            </div>
 
             {checks_box}
 
@@ -667,15 +663,7 @@ def build_html_email(submission):
 
             {tip_box}
 
-            <div style="font-size:14px; line-height:1.7; font-weight:700; font-style:italic; color:#111827; margin-bottom:12px;">
-                {html_escape(guidance_strong)}
-            </div>
-
-            <div style="font-size:14px; line-height:1.7; color:#111827; margin-bottom:34px;">
-                {html_escape(guidance)}
-            </div>
-
-            <div style="font-size:14px; color:#111827; margin-bottom:10px;">Regards,</div>
+            <div style="font-size:14px; color:#111827; margin:12px 0 10px;">Regards,</div>
             <div style="font-size:14px; font-weight:700; color:#111827;">Serena</div>
             <div style="font-size:14px; color:#111827; margin-top:6px;">ScamWatcher Advisor</div>
             <div style="font-size:12px; color:#111827; margin-top:8px;">
@@ -874,7 +862,7 @@ def send_submission_response(submission_id, manual=False):
         send_email(
             to=to_email,
             subject=f"ScamWatcher Review – {reference_code} – {original_subject}",
-            body=submission.get("proposed_response") or "ScamWatcher review attached.",
+            body="\n".join(reply_advice.text_block(submission)) + "\n\n" + (submission.get("proposed_response") or ""),
             html_body=html_body,
             bcc=AUDIT_BCC_EMAIL,
         )

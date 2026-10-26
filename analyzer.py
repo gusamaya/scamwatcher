@@ -1797,6 +1797,7 @@ def analyze_email(submission):
         "scam_category": review.get("scam_category", ""),
         "scam_advice": review.get("advice", ""),
         "verdict_note": verdict_note,
+        "brand": review.get("claimed_brand", ""),
         "proposed_response": build_response({
             "review_checks": review.get("checks", []),
             "scam_type": review.get("scam_type", ""),
