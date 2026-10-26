@@ -1688,6 +1688,62 @@ def analyze_email(submission):
         recommended_action = "Do not act until independently verified. The attachment contains payment, identity, or document-level warning signs."
         should_reply = 1
 
+    # Appears to be a genuine email from a known organisation: the sender is
+    # an official address and every link goes to that organisation. It is not
+    # labelled a scam, but anything it asks for (payment, a call, signing in)
+    # is still flagged, and the advice works whether it is real or a very
+    # good fake.
+    verdict_note = ""
+    if review.get("appears_genuine"):
+        brand = review.get("genuine_brand") or "the organisation"
+        signals_found = set(review.get("content_signals") or [])
+        asks = []
+        if "payment" in signals_found or "untraceable_payment" in signals_found or "bank_change" in signals_found:
+            asks.append("pay")
+        if "credentials" in signals_found or "sensitive" in signals_found or "personal_info" in signals_found:
+            asks.append("sign in or give details")
+        if "callback" in signals_found:
+            asks.append("call a phone number")
+        asks_text = " or ".join(asks) if asks else "act"
+
+        if review.get("sender_authenticated"):
+            verdict_note = f"Appears to be a genuine {brand} email. It passed sender authentication and its links go to official {brand} websites."
+        else:
+            verdict_note = f"Appears to be a genuine {brand} email. It comes from an official {brand} address and its links go to official {brand} websites."
+
+        if asks:
+            risk_score = 50
+            risk_rating = "Needs Attention"
+            recommended_action = (
+                f"This looks like a real {brand} email. Because it asks you to {asks_text}, don't use the links or phone "
+                f"number in it. Open the official {brand} app, or type the {brand} website address yourself, to check "
+                f"your account and pay or respond there."
+            )
+        else:
+            risk_score = min(risk_score, 30)
+            risk_rating = "Low Risk"
+            recommended_action = (
+                f"This looks like a real {brand} email. If you need to act on it, use the official {brand} app or "
+                f"type the {brand} website address yourself rather than the links in the email."
+            )
+        should_reply = 1
+
+        notes = [f"The sender address and all links belong to {brand}."]
+        if not review.get("sender_authenticated"):
+            notes.append(
+                "Because the email was forwarded inline, its sender authentication (SPF/DKIM) couldn't be checked, "
+                "and a forged sender address can look identical, so treat it with care."
+            )
+        if asks:
+            notes.append(f"It asks you to {asks_text}, which is what scammers imitating {brand} also ask for.")
+        # Use the four checks' own warnings rather than the older keyword
+        # findings, which can contradict an official sender ("does not align").
+        check_warnings = [
+            c.get("headline", "") for c in (review.get("checks") or [])
+            if c.get("status") in ("fail", "caution") and c.get("headline")
+        ]
+        findings = notes + [w for w in check_warnings if w not in notes]
+
     unique_findings = list(dict.fromkeys(findings))
     unique_findings = [normalize_finding_text(f) for f in unique_findings]
     unique_findings = list(dict.fromkeys(unique_findings))
@@ -1740,6 +1796,7 @@ def analyze_email(submission):
         "scam_type": review.get("scam_type", ""),
         "scam_category": review.get("scam_category", ""),
         "scam_advice": review.get("advice", ""),
+        "verdict_note": verdict_note,
         "proposed_response": build_response({
             "review_checks": review.get("checks", []),
             "scam_type": review.get("scam_type", ""),

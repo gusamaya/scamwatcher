@@ -267,6 +267,7 @@ def _normalise_analysis_result(result):
         "review_checks": review_checks,
         "scam_type": _safe_str(result.get("scam_type") or ""),
         "scam_category": _safe_str(result.get("scam_category") or ""),
+        "verdict_note": _safe_str(result.get("verdict_note") or ""),
     }
 
 
@@ -300,6 +301,7 @@ def _insert_submission_flexible(insert_submission, email_record, clean):
         "review_checks": json.dumps(clean.get("review_checks", [])),
         "scam_type": clean.get("scam_type", ""),
         "scam_category": clean.get("scam_category", ""),
+        "verdict_note": clean.get("verdict_note", ""),
     }
 
     try:

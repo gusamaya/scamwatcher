@@ -333,6 +333,7 @@ def ensure_schema():
         "review_checks": "TEXT",
         "scam_type": "TEXT",
         "scam_category": "TEXT",
+        "verdict_note": "TEXT",
     }
 
     for column_name, column_type in required_columns.items():
@@ -541,6 +542,11 @@ def build_html_email(submission):
         guidance_strong = "We recommend not taking action until this request has been independently verified."
         guidance = "Verify any request using contact details sourced independently from the email, and do not rely on any attachment without verification."
 
+    if submission.get("verdict_note"):
+        # Genuine-looking email: the safe habit, not a scam warning.
+        guidance_strong = "Go to the organisation directly rather than through the email."
+        guidance = "Use their official app, or type their website address yourself, and use the phone number printed on their website or your bill."
+
     original_from = html_escape(submission.get("from_header") or "Unknown sender")
     original_subject = html_escape(submission.get("subject") or "(No subject)")
     original_received = html_escape(submission.get("received_at") or "Unknown")
@@ -581,6 +587,15 @@ def build_html_email(submission):
                 <strong>Tip:</strong> {html_escape(check["details"][-1])}
             </div>
             """
+
+    genuine_box = ""
+    if submission.get("verdict_note"):
+        genuine_box = f"""
+            <div style="background:#f0fdf4; border:1px solid #bbf7d0; border-radius:10px; padding:12px 14px; margin:0 0 18px 0; color:#166534; font-size:14px; line-height:1.6;">
+                <strong>{html_escape(submission.get("verdict_note"))}</strong>
+                That still doesn't make the links or phone number in it safe to use, so follow the advice below.
+            </div>
+        """
 
     scam_type_box = ""
     if submission.get("scam_type"):
@@ -629,6 +644,8 @@ def build_html_email(submission):
             </div>
 
             {scam_type_box}
+
+            {genuine_box}
 
             <div style="font-size:14px; font-weight:700; color:#111827; margin-bottom:4px;">
                 Recommended Action:

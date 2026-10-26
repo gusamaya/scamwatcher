@@ -270,6 +270,23 @@ def is_official(host, brand):
     return any(host == d or host.endswith("." + d) for d in BRANDS[brand]["domains"])
 
 
+def official_brand_of(host):
+    """The brand a host officially belongs to (telstra.com.au -> Telstra), or ""."""
+    for brand in BRANDS:
+        if is_official(host, brand):
+            return brand
+    return ""
+
+
+def same_organisation(host_a, host_b):
+    """True when two hosts belong to the same organisation, e.g. telstra.com
+    and telstra.com.au, or two official domains of one brand."""
+    if registrable_domain(host_a) == registrable_domain(host_b):
+        return True
+    brand_a = official_brand_of(host_a)
+    return bool(brand_a) and is_official(host_b, brand_a)
+
+
 def _domain_tokens(host):
     return set(t for t in re.split(r"[.\-_]", (host or "").lower()) if t)
 
@@ -718,6 +735,9 @@ def check_links(body, html_links=None, sender_domain="", claimed_brand="", conte
         elif claimed_brand and not is_official(host, claimed_brand) and host not in URL_SHORTENERS:
             if any(reg == registrable_domain(d) for d in BRANDS[claimed_brand]["domains"]):
                 pass
+            elif content_signals & {"payment", "credentials", "sensitive", "bank_change"}:
+                # Asking you to pay or sign in on someone else's website is the scam.
+                problems.append(("fail", f"The email claims to be from {claimed_brand} and asks you to pay or sign in, but this link goes to {host}, not {claimed_brand}."))
             else:
                 problems.append(("caution", f"The email claims to be from {claimed_brand}, but this link goes to {host}."))
 
@@ -728,7 +748,7 @@ def check_links(body, html_links=None, sender_domain="", claimed_brand="", conte
             shown_host = re.sub(r"^www\.", "", shown.group(1))
             shown_tld = tld_of(shown_host)
             looks_like_domain = shown_tld in {"com", "au", "net", "org", "gov", "io", "co", "uk", "nz", "info", "biz", "app"} or shown_tld in SUSPICIOUS_TLDS
-            if looks_like_domain and registrable_domain(shown_host) != reg:
+            if looks_like_domain and registrable_domain(shown_host) != reg and not same_organisation(shown_host, host):
                 problems.append(("fail", f'The link text shows "{shown.group(0)}" but actually goes to {host}.'))
 
         if host in URL_SHORTENERS or reg in URL_SHORTENERS:
@@ -1103,6 +1123,36 @@ def run_review(from_header, subject, body, reply_to="", html_links=None, auth_re
         else:
             scam_type, scam_category = "Suspicious email (no specific campaign)", "Other"
 
+    # Does it appear to be genuinely from the organisation it names? The sender
+    # address is an official domain of that brand, the sender check passed, and
+    # every link goes to that brand (or a known email-tracking service).
+    brand = sender.get("claimed_brand", "")
+    sender_domain = sender.get("sender_domain", "")
+    link_domains = links.get("domains") or []
+    links_official = all(
+        is_official(d, brand)
+        or registrable_domain(d) in TRACKING_DOMAINS
+        or any(d.endswith("." + t) for t in TRACKING_DOMAINS)
+        for d in link_domains
+    ) if brand else False
+    appears_genuine = bool(
+        brand
+        and sender_domain
+        and is_official(sender_domain, brand)
+        and statuses["sender"] == "pass"
+        and statuses["links"] != "fail"
+        and links_official
+    )
+    authenticated = bool(auth_results) and (
+        (auth_results or {}).get("dmarc") == "pass"
+        or ((auth_results or {}).get("spf") == "pass" and (auth_results or {}).get("dkim") == "pass")
+    )
+    if appears_genuine:
+        # Keep the warning signs visible, but don't call a real organisation's
+        # email "phishing". The analyzer turns this into "Needs Attention".
+        floor = 0
+        scam_type, scam_category = "", ""
+
     # Tidy, storable version (drop internal-only fields)
     public_checks = [
         {k: c[k] for k in ("key", "title", "status", "headline", "details")}
@@ -1119,4 +1169,8 @@ def run_review(from_header, subject, body, reply_to="", html_links=None, auth_re
         "fail_count": len(fails),
         "caution_count": len(cautions),
         "effective_caution_count": len(effective_cautions),
+        "appears_genuine": appears_genuine,
+        "genuine_brand": brand if appears_genuine else "",
+        "sender_authenticated": authenticated,
+        "content_signals": content.get("signals", []),
     }
