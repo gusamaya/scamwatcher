@@ -1,6 +1,7 @@
 import json
 import os
 import sqlite3
+from datetime import datetime
 
 DB_NAME = os.getenv("DB_PATH", "/var/data/scamwatcher.db")
 
@@ -10,9 +11,22 @@ def get_connection():
     if db_dir:
         os.makedirs(db_dir, exist_ok=True)
 
-    conn = sqlite3.connect(DB_NAME)
+    # Wait up to 30 seconds for another thread to finish writing instead of
+    # failing straight away with "database is locked".
+    conn = sqlite3.connect(DB_NAME, timeout=30)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA busy_timeout = 30000")
     return conn
+
+
+def enable_wal():
+    """Write-ahead logging: readers (the dashboard) never block the writer
+    (the inbox checker) and the other way round. Persistent once set."""
+    conn = sqlite3.connect(DB_NAME, timeout=30)
+    try:
+        conn.execute("PRAGMA journal_mode = WAL")
+    finally:
+        conn.close()
 
 
 def column_exists(conn, table_name, column_name):
@@ -43,6 +57,16 @@ def ensure_columns():
         "review_checks": "TEXT",
         "scam_type": "TEXT",
         "scam_category": "TEXT",
+        "country": "TEXT",
+        "channel": "TEXT",
+        "screenshot_files": "TEXT",
+        "created_at": "TEXT",
+        "screenshot_text": "TEXT",
+        "auto_review": "TEXT",
+        "auto_review_error": "TEXT",
+        "verdict_note": "TEXT",
+        "brand": "TEXT",
+        "message_kind": "TEXT",
     }
 
     for column_name, column_type in required_columns.items():
@@ -56,6 +80,8 @@ def ensure_columns():
 
 
 def init_db():
+    get_connection().close()  # makes sure the folder exists
+    enable_wal()
     conn = get_connection()
     cursor = conn.cursor()
 
@@ -204,6 +230,13 @@ def insert_submission(
     review_checks=None,
     scam_type=None,
     scam_category=None,
+    country=None,
+    channel=None,
+    screenshot_files=None,
+    needs_manual_review=False,
+    verdict_note=None,
+    brand=None,
+    message_kind=None,
     **kwargs,
 ):
     if (not from_header) and kwargs.get("sender"):
@@ -218,7 +251,17 @@ def insert_submission(
 
     # Emails sent straight to our address (not forwarded by a person) are held:
     # the "sender" is usually the scammer, so we must never reply automatically.
-    response_status = "held" if submission_type == "direct" else "draft"
+    # Screenshots can't be read by the rule-based checks, so anything that
+    # depends on an image waits for a person to write the reply.
+    if submission_type == "direct":
+        response_status = "held"
+    elif needs_manual_review:
+        response_status = "manual"
+    else:
+        response_status = "draft"
+
+    screenshot_files_json = _normalise_list_json(screenshot_files)
+    created_at = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
 
     if isinstance(review_checks, (list, dict)):
         review_checks_json = json.dumps(review_checks)
@@ -266,9 +309,16 @@ def insert_submission(
             forward_method,
             review_checks,
             scam_type,
-            scam_category
+            scam_category,
+            country,
+            channel,
+            screenshot_files,
+            created_at,
+            verdict_note,
+            brand,
+            message_kind
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         message_id,
         received_at,
@@ -305,6 +355,13 @@ def insert_submission(
         review_checks_json,
         scam_type or None,
         scam_category or None,
+        country or None,
+        channel or None,
+        screenshot_files_json,
+        created_at,
+        verdict_note or None,
+        brand or None,
+        message_kind or None,
     ))
 
     conn.commit()

@@ -270,6 +270,23 @@ def is_official(host, brand):
     return any(host == d or host.endswith("." + d) for d in BRANDS[brand]["domains"])
 
 
+def official_brand_of(host):
+    """The brand a host officially belongs to (telstra.com.au -> Telstra), or ""."""
+    for brand in BRANDS:
+        if is_official(host, brand):
+            return brand
+    return ""
+
+
+def same_organisation(host_a, host_b):
+    """True when two hosts belong to the same organisation, e.g. telstra.com
+    and telstra.com.au, or two official domains of one brand."""
+    if registrable_domain(host_a) == registrable_domain(host_b):
+        return True
+    brand_a = official_brand_of(host_a)
+    return bool(brand_a) and is_official(host_b, brand_a)
+
+
 def _domain_tokens(host):
     return set(t for t in re.split(r"[.\-_]", (host or "").lower()) if t)
 
@@ -337,6 +354,9 @@ FILLER_WORDS = {
     "refund", "refunds", "rebate", "rebates", "notice", "notices", "office",
     "enquiries", "compliance", "debt", "recovery", "claims", "fines", "tolls",
     "member", "members", "rewards", "id", "pay", "secure", "assistance",
+    "card", "cards", "statement", "statements", "transaction", "transactions",
+    "purchase", "purchases", "order", "orders", "message", "messages", "infos",
+    "news", "digital", "mobile", "app", "system", "automated", "auto", "desk",
 }
 
 
@@ -356,6 +376,27 @@ def brand_claimed_by_display_name(display_name):
                 remainder = text.replace(f" {name} ", " ").split()
                 if all(word in FILLER_WORDS or word.isdigit() for word in remainder):
                     return brand
+    return ""
+
+
+def brand_named_in_display(display_name):
+    """A brand named anywhere in the display name, e.g. "NAB Card Notifications"
+    or "Telstra Billing Team AU". Short names that are also ordinary words
+    (nab, anz, ato...) only count when written in capitals, as organisations
+    write them; "apple", "meta", "outlook" and "origin" only count through
+    brand_claimed_by_display_name, so "Big Apple Pizza" isn't Apple."""
+    raw = display_name or ""
+    lowered = " " + re.sub(r"[^a-z0-9. ]", " ", raw.lower()) + " "
+    for brand, info in BRANDS.items():
+        for name in info["names"]:
+            if name in {"apple", "meta", "outlook", "origin"}:
+                continue
+            if name in AMBIGUOUS_NAMES:
+                if re.search(rf"(?<![A-Za-z0-9]){re.escape(name.upper())}(?![A-Za-z0-9])", raw):
+                    return brand
+                continue
+            if f" {name} " in lowered:
+                return brand
     return ""
 
 
@@ -437,7 +478,7 @@ def check_sender(from_header, reply_to="", auth_results=None, submission_type=""
         levels.append("fail")
 
     # Brand claimed by display name or imitated by the domain
-    claimed_brand = brand_claimed_by_display_name(display)
+    claimed_brand = brand_claimed_by_display_name(display) or brand_named_in_display(display)
     imitated_brand = brand_imitated_by_domain(domain)
 
     if claimed_brand:
@@ -584,6 +625,10 @@ CONTENT_SIGNALS = [
     ("callback", "caution", "Asks you to call a phone number", [
         r"\b(call|phone|ring|contact)( us)?( now| immediately| on| at)?\s*:?\s*(\+?61|0|1[38]00)[\d \-]{7,}",
         r"\b(call|phone|ring) (our|the) (support|helpline|help desk|billing|fraud) (team|line|department)\b",
+        r"\b(call|phone|ring|contact|support|helpline)\b[^0-9\n]{0,20}(\+?61 ?4|04)\d{2}[ \d]{6,9}",
+    ]),
+    ("mobile_contact", "caution", "Gives a mobile phone number as the organisation's contact (banks and large companies don't)", [
+        r"\b(support|helpline|customer service|fraud team|security team|contact us|call us)\b[^0-9\n]{0,20}(\+?61 ?4|04)\d{2}[ \d]{6,9}",
     ]),
     ("remote_access", "fail", "Asks you to install remote-access software", [
         r"\banydesk\b", r"\bteamviewer\b", r"\bultraviewer\b", r"\bquick ?assist\b", r"\bremote (access|desktop|support) (app|software|tool)\b",
@@ -718,6 +763,9 @@ def check_links(body, html_links=None, sender_domain="", claimed_brand="", conte
         elif claimed_brand and not is_official(host, claimed_brand) and host not in URL_SHORTENERS:
             if any(reg == registrable_domain(d) for d in BRANDS[claimed_brand]["domains"]):
                 pass
+            elif content_signals & {"payment", "credentials", "sensitive", "bank_change"}:
+                # Asking you to pay or sign in on someone else's website is the scam.
+                problems.append(("fail", f"The email claims to be from {claimed_brand} and asks you to pay or sign in, but this link goes to {host}, not {claimed_brand}."))
             else:
                 problems.append(("caution", f"The email claims to be from {claimed_brand}, but this link goes to {host}."))
 
@@ -728,7 +776,7 @@ def check_links(body, html_links=None, sender_domain="", claimed_brand="", conte
             shown_host = re.sub(r"^www\.", "", shown.group(1))
             shown_tld = tld_of(shown_host)
             looks_like_domain = shown_tld in {"com", "au", "net", "org", "gov", "io", "co", "uk", "nz", "info", "biz", "app"} or shown_tld in SUSPICIOUS_TLDS
-            if looks_like_domain and registrable_domain(shown_host) != reg:
+            if looks_like_domain and registrable_domain(shown_host) != reg and not same_organisation(shown_host, host):
                 problems.append(("fail", f'The link text shows "{shown.group(0)}" but actually goes to {host}.'))
 
         if host in URL_SHORTENERS or reg in URL_SHORTENERS:
@@ -845,7 +893,9 @@ SCAM_PATTERNS = [
             [r"\bbank\b", r"\bcommbank\b", r"\bnetbank\b", r"\bwestpac\b", r"\banz\b", r"\bnab\b", r"\bst\.? ?george\b", r"\bsuncorp\b", r"\bbendigo\b", r"\bpaypal\b", r"\bcard\b"],
             [r"\b(account|card) (has been |is |will be )?(suspended|locked|restricted|frozen|blocked|limited|on hold)\b", r"\bunusual (activity|sign[- ]?in|login|transaction)",
              r"\bsuspicious (activity|transaction|login|sign[- ]?in)", r"\bverify your (identity|account|details)\b", r"\bsecurity (alert|check|update)\b",
-             r"\bunauthori[sz]ed (transaction|access|payment)\b", r"\bnew payee\b", r"\bconfirm (this|the) (transaction|payment)\b"],
+             r"\bunauthori[sz]ed (transaction|access|payment)\b", r"\bnew payee\b", r"\bconfirm (this|the) (transaction|payment)\b",
+             r"\bsecurity checks?\b", r"\b(payment|transaction|purchase) (is |has been |was )?(currently )?(on hold|paused|pending review|declined|blocked|flagged)\b",
+             r"\bpaused (a |the |your )?(recent )?(transaction|payment|purchase)\b", r"\bsecure your (account|card)\b"],
         ],
         "official_brands": ["CommBank", "Westpac", "ANZ", "NAB", "St.George", "Suncorp", "Bendigo Bank", "PayPal"],
         "advice": "Call your bank on the number on the back of your card, or open your banking app directly. Banks will not ask you to confirm details through an email link.",
@@ -969,6 +1019,116 @@ SCAM_PATTERNS = [
     },
 ]
 
+# ----------------------------------------------------------------------
+# Pacific campaigns: the six scam types described on scamwatcherpacific.com.
+# The advice lines mirror the website's guidance.
+# ----------------------------------------------------------------------
+SCAM_PATTERNS += [
+    {
+        "name": "Fake overseas job offer",
+        "category": "Work",
+        "all_of": [
+            [r"\bseasonal (work|job|worker)", r"\bfarm (work|job)", r"\bfruit pick", r"\bpalm scheme\b", r"\brse\b", r"\brecognised seasonal employer",
+             r"\bwork (in|visa for) (australia|new zealand|nz|canada)\b", r"\bjob offer\b", r"\bjobs? (in|available in) (australia|new zealand|nz)\b", r"\bpacific australia labour mobility\b"],
+            [r"\b(visa|placement|processing|registration|application|medical|training) (fee|payment|cost|charge)", r"\bpay\b.{0,30}\b(fee|deposit)\b",
+             r"\bsend\b.{0,30}\b(money|payment|fee)\b", r"\bdeposit\b", r"\bsecure your (place|spot|position)\b"],
+        ],
+        "official_brands": [],
+        "advice": "Real recruitment schemes don't charge you to apply. Check any job offer with your government's labour mobility office before paying anything.",
+    },
+    {
+        "name": "Family money request from a new number or hacked account",
+        "category": "Family",
+        "all_of": [
+            [r"\bnew (number|phone)\b", r"\bchanged? (my )?number\b", r"\blost my phone\b", r"\bphone (broke|is broken)\b", r"\bhi (mum|mom|dad|aunty|uncle|cuz)\b",
+             r"\bit'?s me\b", r"\bthis is my new\b"],
+            [r"\bsend\b.{0,20}\b(money|cash|\$|funds)\b", r"\btransfer\b", r"\burgent(ly)?\b", r"\bpay (a|this) bill\b", r"\bneed (some )?money\b", r"\bpay you back\b"],
+        ],
+        "official_brands": [],
+        "advice": "Call them on their usual number first. Don't send money until you have spoken to them.",
+    },
+    {
+        "name": "Remittance or money transfer on hold",
+        "category": "Money transfer",
+        "all_of": [
+            [r"\bremittance\b", r"\bmoney transfer\b", r"\btransfer\b", r"\bwestern union\b", r"\bmoneygram\b", r"\bwire\b", r"\bfunds\b"],
+            [r"\bon hold\b", r"\bpending\b.{0,30}\b(release|clearance)\b", r"\b(release|clearance|unlock(ing)?|activation) fee\b", r"\bpay\b.{0,30}\bto release\b",
+             r"\bconfirm your (details|identity|account)\b", r"\bfunds? (have been|are) (held|frozen|suspended)\b"],
+        ],
+        "official_brands": [],
+        "advice": "Check directly with the transfer company using their official contact details, not the ones in the message.",
+    },
+    {
+        "name": "Prize or mobile money scam",
+        "category": "Mobile",
+        "all_of": [
+            [r"\byou('ve| have) won\b", r"\bwinner\b", r"\bprize\b", r"\bpromotion\b", r"\blucky draw\b", r"\bmobile money\b", r"\be-?wallet\b", r"\bairtime\b", r"\btop[- ]?up\b"],
+            [r"\bsend\b.{0,30}\b(credit|airtime|code|pin|fee)\b", r"\b(share|send|tell us|forward)\b.{0,30}\b(code|otp|pin)\b", r"\bverification code\b",
+             r"\b(processing|collection|delivery|claim) fee\b", r"\bto claim\b"],
+        ],
+        "official_brands": [],
+        "advice": "Never share a code sent to your phone. Phone companies and banks don't ask you to pay to collect a prize.",
+    },
+    {
+        "name": "Investment or \"double your money\" scheme",
+        "category": "Investment",
+        "all_of": [
+            [r"\bdouble your money\b", r"\binvest(ment|ing)?\b", r"\bcrypto\b", r"\bbitcoin\b", r"\bforex\b", r"\btrading\b", r"\bsavings group\b", r"\bscheme\b"],
+            [r"\bguaranteed\b", r"\b\d{2,4} ?% (return|profit|interest)", r"\b(daily|weekly) (profit|returns?)\b", r"\bdouble\b", r"\brecruit\b", r"\binvite (friends|others|members)\b",
+             r"\bno risk\b", r"\brisk[- ]free\b"],
+        ],
+        "official_brands": [],
+        "advice": "If you must recruit others to earn, walk away. Big, fast, guaranteed returns are a warning sign.",
+    },
+    {
+        "name": "Online romance scam",
+        "category": "Relationships",
+        "all_of": [
+            [r"\bmy (love|darling|dear|sweetheart|honey)\b", r"\bi love you\b", r"\bsoul ?mate\b", r"\bmet (you )?online\b", r"\bcan'?t (video )?call\b", r"\bdeployed\b", r"\boil rig\b"],
+            [r"\bsend\b.{0,30}\b(money|funds|\$)\b", r"\bcustoms (fee|charge)\b", r"\b(plane|flight|travel) ticket\b", r"\bhospital (bill|fee)\b", r"\bemergency\b", r"\bgift card\b"],
+        ],
+        "official_brands": [],
+        "advice": "Don't send money to someone you haven't met in person. Send us the messages to check first.",
+    },
+    # --- Social media account takeovers (Facebook, Instagram, WhatsApp) ---
+    {
+        "name": "Fake Meta policy violation or page takeover",
+        "category": "Social media",
+        "all_of": [
+            [r"\bmeta\b", r"\bfacebook\b", r"\binstagram\b", r"\bbusiness (support|suite|manager|centre|center)\b",
+             r"\bfan ?page\b", r"\bcommunity standards\b"],
+            [r"\bviolat", r"\bcopyright\b", r"\binfring", r"\bintellectual property\b", r"\bcommunity standards\b",
+             r"\b(page|account) (has been |will be |is )?(restricted|suspended|disabled|deactivated|deleted|removed|locked|unpublished)\b",
+             r"\b(permanent(ly)?|scheduled for) (delet|deactivat|disabl|remov)", r"\bappeal\b", r"\breported\b.{0,40}\b(page|account|post)\b",
+             r"\bpolicy (breach|violation|warning)\b", r"\bfinal (warning|notice)\b"],
+        ],
+        "official_brands": ["Facebook", "Instagram"],
+        "advice": "Meta does not send warnings about your page by Messenger, chat or a PDF. Check your page in the Facebook app under Account Status or Support Inbox, and never enter your password through a link or file.",
+    },
+    {
+        "name": "Fake Meta verification or blue tick offer",
+        "category": "Social media",
+        "all_of": [
+            [r"\bmeta\b", r"\bfacebook\b", r"\binstagram\b"],
+            [r"\bblue (tick|badge|check)\b", r"\bverified badge\b", r"\bmeta verified\b", r"\bget (your page |your account )?verified\b",
+             r"\bverification (request|badge|form|process)\b", r"\beligible for verification\b"],
+        ],
+        "official_brands": ["Facebook", "Instagram"],
+        "advice": "Meta Verified is only applied for inside the Facebook or Instagram app itself. Ignore messages offering a blue tick and don't enter your login details.",
+    },
+    {
+        "name": "Verification code theft (WhatsApp, Facebook or SMS code)",
+        "category": "Social media",
+        "all_of": [
+            [r"\b(\d-digit |6 digit |six digit |verification |security |login |whatsapp )code\b", r"\bcode (i|we) (just )?sent\b", r"\bsent (you )?a code\b"],
+            [r"\b(send|forward|share|give|tell) (me|us)?\s?(the|that|this|your)? ?code\b", r"\bsent (to you|to your phone) by (mistake|accident)\b",
+             r"\bby mistake\b", r"\bwrong number\b", r"\bplease send\b"],
+        ],
+        "official_brands": [],
+        "advice": "Never share a code sent to your phone, even with a friend or family member. Anyone asking for it is trying to take over your account. If you already shared it, turn on two-step verification and contact the app's support from inside the app.",
+    },
+]
+
 
 def check_known_scams(subject, body, attachment_text="", sender_check=None, links_check=None, sender_domain="", link_domains=None):
     text = re.sub(r"\s+", " ", _lower(f"{subject}\n{body}\n{attachment_text}"))
@@ -993,7 +1153,7 @@ def check_known_scams(subject, body, attachment_text="", sender_check=None, link
         return {
             "key": "known_scams", "title": "Known scam patterns", "status": "pass",
             "headline": "Does not match any known scam campaign in our library.",
-            "details": [f"Compared against {len(SCAM_PATTERNS)} common scam types targeting Australians."],
+            "details": [f"Compared against {len(SCAM_PATTERNS)} common scam types seen in the Pacific and Australia."],
             "scam_type": "", "scam_category": "", "advice": "",
         }
 
@@ -1024,7 +1184,14 @@ def check_known_scams(subject, body, attachment_text="", sender_check=None, link
         if best["official_brands"] and not any(is_official(d, b) for b in best["official_brands"])
         and registrable_domain(d) not in TRACKING_DOMAINS
     ]
-    always_scam = best["category"] in ("Business email compromise", "Advance fee", "Extortion", "Investment", "Employment", "Impersonation")
+    always_scam = best["category"] in (
+        "Business email compromise", "Advance fee", "Extortion", "Investment", "Employment", "Impersonation",
+        # Pacific campaigns: asking for a fee or code in these contexts is never genuine.
+        "Work", "Money transfer", "Mobile", "Relationships",
+        # A page warning or code request sent by chat is never Meta itself;
+        # a real notice from Meta's own address still lands on "caution" above.
+        "Social media",
+    )
 
     if official_hit:
         status = "caution"
@@ -1103,6 +1270,36 @@ def run_review(from_header, subject, body, reply_to="", html_links=None, auth_re
         else:
             scam_type, scam_category = "Suspicious email (no specific campaign)", "Other"
 
+    # Does it appear to be genuinely from the organisation it names? The sender
+    # address is an official domain of that brand, the sender check passed, and
+    # every link goes to that brand (or a known email-tracking service).
+    brand = sender.get("claimed_brand", "")
+    sender_domain = sender.get("sender_domain", "")
+    link_domains = links.get("domains") or []
+    links_official = all(
+        is_official(d, brand)
+        or registrable_domain(d) in TRACKING_DOMAINS
+        or any(d.endswith("." + t) for t in TRACKING_DOMAINS)
+        for d in link_domains
+    ) if brand else False
+    appears_genuine = bool(
+        brand
+        and sender_domain
+        and is_official(sender_domain, brand)
+        and statuses["sender"] == "pass"
+        and statuses["links"] != "fail"
+        and links_official
+    )
+    authenticated = bool(auth_results) and (
+        (auth_results or {}).get("dmarc") == "pass"
+        or ((auth_results or {}).get("spf") == "pass" and (auth_results or {}).get("dkim") == "pass")
+    )
+    if appears_genuine:
+        # Keep the warning signs visible, but don't call a real organisation's
+        # email "phishing". The analyzer turns this into "Needs Attention".
+        floor = 0
+        scam_type, scam_category = "", ""
+
     # Tidy, storable version (drop internal-only fields)
     public_checks = [
         {k: c[k] for k in ("key", "title", "status", "headline", "details")}
@@ -1119,4 +1316,8 @@ def run_review(from_header, subject, body, reply_to="", html_links=None, auth_re
         "fail_count": len(fails),
         "caution_count": len(cautions),
         "effective_caution_count": len(effective_cautions),
+        "appears_genuine": appears_genuine,
+        "genuine_brand": brand if appears_genuine else "",
+        "sender_authenticated": authenticated,
+        "content_signals": content.get("signals", []),
     }

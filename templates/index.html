@@ -1,6 +1,8 @@
 {% extends "base.html" %}
 
 {% set view_titles = {
+    'manual': ('Needs manual review', 'Screenshots and website submissions the automatic checks cannot read. Open one, look at it and write the reply.'),
+    'web_form': ('Website form', 'Everything sent through the Get it checked form on the website.'),
     'pending': ('Needs approval', 'Replies drafted for people who forwarded an email. Check each verdict, then approve the reply.'),
     'failed': ('Failed to send', 'Replies that could not be delivered. Open one to see the error and try again.'),
     'sent': ('Sent', 'Submissions that have received a reply.'),
@@ -8,7 +10,7 @@
     'high': ('High risk', 'Submissions rated High Risk.'),
     'attention': ('Needs attention', 'Submissions with some warning signs.'),
     'low': ('Low risk', 'Submissions with no strong scam indicators.'),
-    'all': ('All submissions', 'Every email submitted to ScamWatcher, newest first.'),
+    'all': ('All submissions', 'Every submission, newest first.'),
 } %}
 {% set heading = view_titles.get(active_filter, view_titles['all']) %}
 {% if active_filter == 'pending' and auto_send_enabled %}
@@ -49,7 +51,7 @@
         {% for s in submissions %}
             {% set status = (s.response_status or 'draft')|lower %}
             {% set rating = (s.risk_rating or '')|lower %}
-            {% set rk = 'high' if 'high' in rating else ('attn' if ('attention' in rating or 'medium' in rating) else 'low') %}
+            {% set rk = 'manual' if status == 'manual' else ('high' if 'high' in rating else ('attn' if ('attention' in rating or 'medium' in rating) else 'low')) %}
             {% set score = s.risk_score if s.risk_score is not none else 0 %}
             <tr data-search="{{ ((s.subject or '') ~ ' ' ~ (s.from_header or '') ~ ' ' ~ (s.scam_type or '') ~ ' ' ~ (s.submitter_email or ''))|lower }}">
                 <td class="col-received">
@@ -57,7 +59,7 @@
                 </td>
                 <td class="col-email">
                     <a class="email-subject" href="{{ url_for('submission_detail', submission_id=s.id) }}">{{ s.subject or '(No subject)' }}</a>
-                    <span class="email-sender">{{ (s.from_header or 'Unknown sender')|clean_sender }}</span>
+                    <span class="email-sender">{% if s.submission_type == 'web_form' %}{{ s.submitter_email }}{% if s.screenshot_files %} · screenshot{% endif %}{% else %}{{ (s.from_header or 'Unknown sender')|clean_sender }}{% endif %}</span>
                     {% if s.scam_type %}<span class="email-type">{{ s.scam_type }}</span>{% endif %}
                 </td>
                 <td class="col-checks">
@@ -67,6 +69,8 @@
                                 <span class="check-light is-{{ c.status }}" title="{{ c.title }}: {{ c.headline }}">{{ {'sender':'S','content':'C','links':'L','known_scams':'K'}.get(c.key, '?') }}</span>
                             {% endfor %}
                         </div>
+                    {% elif status == 'manual' or s.submission_type == 'web_form' %}
+                        <span class="checks-none">Reviewed by a person</span>
                     {% else %}
                         <span class="checks-none">Not available</span>
                     {% endif %}
@@ -89,6 +93,8 @@
                     {% elif status == 'failed' %}
                         <span class="status status-failed">Failed</span>
                         <span class="status-sub">{{ s.send_attempts or 0 }} attempt{% if (s.send_attempts or 0) != 1 %}s{% endif %}</span>
+                    {% elif status == 'manual' %}
+                        <span class="status status-manual">Write reply</span>
                     {% elif status == 'held' %}
                         <span class="status status-held">Not replied</span>
                         <span class="status-sub">Sent directly</span>
@@ -106,7 +112,9 @@
     <div class="empty" id="no-matches" hidden><strong>No matches</strong>Try a different sender, subject or scam type.</div>
 {% else %}
     <div class="empty">
-        {% if active_filter == 'pending' %}
+        {% if active_filter == 'manual' %}
+            <strong>Nothing waiting for review</strong>Website submissions and emailed screenshots will appear here.
+        {% elif active_filter == 'pending' %}
             <strong>Nothing waiting for approval</strong>New forwarded emails will appear here within a minute of arriving.
         {% elif active_filter == 'failed' %}
             <strong>No failed replies</strong>Every reply so far has been delivered.

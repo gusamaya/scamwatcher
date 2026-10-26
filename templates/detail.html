@@ -3,7 +3,10 @@
 {% set s = submission %}
 {% set status = (s.response_status or 'draft')|lower %}
 {% set rating = (s.risk_rating or '')|lower %}
-{% set rk = 'high' if 'high' in rating else ('attn' if ('attention' in rating or 'medium' in rating) else 'low') %}
+{% set rk = 'manual' if status == 'manual' else ('high' if 'high' in rating else ('attn' if ('attention' in rating or 'medium' in rating) else 'low')) %}
+{% set is_web = s.submission_type == 'web_form' %}
+{% set shots = s.screenshot_files or [] %}
+{% set ar = s.auto_review or {} %}
 {% set score = s.risk_score if s.risk_score is not none else 0 %}
 {% set review_status = (s.review_status or 'unreviewed')|lower %}
 {% set tag_text = {'fail': 'Warning', 'caution': 'Caution', 'pass': 'OK', 'info': 'Info'} %}
@@ -25,18 +28,41 @@
         <section class="panel verdict is-{{ rk }}" aria-labelledby="subject">
             <h1 class="verdict-subject" id="subject">{{ s.subject or '(No subject)' }}</h1>
             <dl class="meta">
-                <dt>From</dt><dd>{{ (s.from_header or 'Unknown sender')|clean_sender }}</dd>
+                {% if is_web %}
+                    <dt>Source</dt><dd>Website form</dd>
+                    <dt>Submitted by</dt><dd>{{ s.submitter_email }}</dd>
+                    {% if s.country %}<dt>Country</dt><dd>{{ s.country }}</dd>{% endif %}
+                    {% if s.channel %}<dt>Received by</dt><dd>{{ s.channel }}</dd>{% endif %}
+                {% else %}
+                    <dt>From</dt><dd>{{ (s.from_header or 'Unknown sender')|clean_sender }}</dd>
+                {% endif %}
                 <dt>Received</dt><dd><span data-utc="{{ s.received_at or '' }}">{{ s.received_at or 'Unknown' }}</span></dd>
-                {% if s.submitter_email and s.submission_type != 'direct' %}
+                {% if s.submitter_email and s.submission_type not in ('direct', 'web_form') %}
                     <dt>Forwarded by</dt><dd>{{ s.submitter_email }}</dd>
                 {% endif %}
-                <dt>Reference</dt><dd>SW-{{ '%05d'|format(s.id) }}</dd>
+                <dt>Reference</dt><dd>{{ reference_prefix }}-{{ '%05d'|format(s.id) }}</dd>
             </dl>
 
+            {% if status == 'manual' %}
+            <div class="verdict-result">
+                <div>
+                    <p class="verdict-rating is-manual">Needs manual review</p>
+                    <p class="verdict-action">
+                        {% if s.auto_review_error %}The automatic review couldn't finish, so this needs a manual review. Look at the screenshot below and write the reply.
+                        {% elif shots and auto_review_enabled %}The automatic review is reading the screenshot. Refresh in a minute, or write the reply yourself below.
+                        {% elif shots %}This submission includes a screenshot. Automatic review is off (no API key), so look at it below and write the reply.
+                        {% else %}A reviewer needs to read this submission and write the reply.{% endif %}
+                    </p>
+                    {% if s.auto_review_error %}<p class="callout is-error">{{ s.auto_review_error }}</p>{% endif %}
+                </div>
+            </div>
+            {% else %}
             <div class="verdict-result">
                 <div>
                     <p class="verdict-rating is-{{ rk }}">{{ s.risk_rating or 'Low Risk' }}</p>
                     {% if s.scam_type %}<p class="verdict-type">{{ s.scam_type }}</p>{% endif %}
+                    {% if s.verdict_note %}<p class="verdict-genuine">{{ s.verdict_note }}</p>
+                    {% elif is_marketing(s) %}<p class="verdict-genuine">Appears to be marketing (advertising), not a scam.</p>{% endif %}
                     <p class="verdict-action">{{ s.recommended_action or s.human_summary or '' }}</p>
                 </div>
                 <div class="verdict-meter">
@@ -48,8 +74,85 @@
                     <div class="meter-scale" aria-hidden="true"><span>Low</span><span>Attention</span><span>High</span></div>
                 </div>
             </div>
+            {% if ar %}
+            <p class="callout auto-note">
+                <strong>Draft written by the automatic review.</strong>
+                Claude read the screenshot{% if ar.confidence %} (confidence: {{ ar.confidence|lower }}){% endif %}.{% if auto_send_enabled and (ar.confidence or '')|lower == 'high' %} High confidence: this reply is sent automatically.{% else %} Check the screenshot and the text it read before you send.{% endif %}
+                {% if ar.readable == false %}It couldn't read the image clearly, so review it yourself.{% endif %}
+            </p>
+            {% endif %}
+            {% endif %}
         </section>
 
+        {% if shots %}
+        <section class="section" aria-labelledby="shots-title">
+            <h2 class="section-title" id="shots-title">Screenshot{% if shots|length > 1 %}s{% endif %}</h2>
+            <div class="panel shots">
+                {% for name in shots %}
+                    {% set url = url_for('submission_screenshot', submission_id=s.id, name=name) %}
+                    {% if name.endswith('.heic') %}
+                        <p class="note">iPhone photo (HEIC), which most browsers can't display. <a href="{{ url }}">Download it</a> to view.</p>
+                    {% else %}
+                        <a href="{{ url }}" target="_blank" rel="noopener"><img class="shot" src="{{ url }}" alt="Screenshot {{ loop.index }} sent for checking"></a>
+                    {% endif %}
+                {% endfor %}
+                <p class="helper">Screenshots open only for signed-in reviewers. Don't forward them outside the review team.</p>
+            </div>
+        </section>
+        {% endif %}
+
+        {% if s.screenshot_text or ar %}
+        <section class="section" aria-labelledby="read-title">
+            <h2 class="section-title" id="read-title">Text read from the screenshot</h2>
+            <div class="panel read-panel">
+                {% if ar.platform or ar.sender %}
+                <dl class="meta read-meta">
+                    {% if ar.platform %}<dt>Looks like</dt><dd>{{ ar.platform }}</dd>{% endif %}
+                    {% if ar.sender %}<dt>Sender shown</dt><dd>{{ ar.sender }}</dd>{% endif %}
+                    {% if ar.links %}<dt>Links shown</dt><dd>{{ ar.links|join(', ') }}</dd>{% endif %}
+                </dl>
+                {% endif %}
+                <pre class="original-body">{{ s.screenshot_text or 'No text could be read.' }}</pre>
+                <p class="helper">Read automatically and may contain mistakes. Compare it with the screenshot.</p>
+            </div>
+        </section>
+        {% endif %}
+
+        <section class="section" aria-labelledby="original-title">
+            <h2 class="section-title visually-hidden" id="original-title">{% if is_web %}Notes from the person{% else %}Original email{% endif %}</h2>
+            <details class="panel disclosure" {% if is_web %}open{% endif %}>
+                <summary>{% if is_web %}Notes from the person{% else %}Original email{% endif %}</summary>
+                <pre class="original-body">{{ s.body or ('No notes were added.' if is_web else 'No email body was captured.') }}</pre>
+            </details>
+        </section>
+
+        {% if status != 'sent' %}
+        <section class="section" aria-labelledby="write-title">
+            <h2 class="section-title" id="write-title">{% if status == 'manual' %}Write the reply{% else %}Edit the reply{% endif %}</h2>
+            <details class="panel disclosure" {% if status == 'manual' %}open{% endif %}>
+                <summary>{% if status == 'manual' %}Your assessment and advice{% else %}Change the assessment or advice{% endif %}</summary>
+                <form method="POST" class="reply-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <fieldset>
+                        <legend>Assessment</legend>
+                        {% for opt in ['High Risk', 'Needs Attention', 'Low Risk'] %}
+                            <label class="radio"><input type="radio" name="risk_rating" value="{{ opt }}" {% if s.risk_rating == opt %}checked{% endif %} required> {{ opt }}</label>
+                        {% endfor %}
+                    </fieldset>
+                    <label for="scam_type">Likely scam type <span class="opt">(optional)</span></label>
+                    <input id="scam_type" name="scam_type" type="text" maxlength="120" value="{{ s.scam_type or '' }}" placeholder="e.g. Fake overseas job offer">
+                    <label for="recommended_action">What should they do?</label>
+                    <textarea id="recommended_action" name="recommended_action" rows="3" maxlength="1500" required placeholder="e.g. Don't pay the fee. Real seasonal work schemes don't charge you to apply.">{{ s.recommended_action or '' }}</textarea>
+                    <label for="findings">What we noticed <span class="opt">(one per line, up to 8)</span></label>
+                    <textarea id="findings" name="findings" rows="4" placeholder="Asks for a visa fee before any job offer is confirmed&#10;The sender uses a new number, not the employer's official contact">{{ (s.findings or [])|join('\n') }}</textarea>
+                    <button class="btn" name="action" value="save_reply">Save reply</button>
+                    <p class="helper">Plain language works best. The reply preview updates after you save.</p>
+                </form>
+            </details>
+        </section>
+        {% endif %}
+
+        {% if not is_web or s.review_checks %}
         <section class="section" aria-labelledby="checks-title">
             <h2 class="section-title" id="checks-title">How it was checked</h2>
             <div class="panel">
@@ -83,6 +186,7 @@
             {% endif %}
             </div>
         </section>
+        {% endif %}
 
         {% if s.findings %}
         <section class="section" aria-labelledby="findings-title">
@@ -95,7 +199,7 @@
         </section>
         {% endif %}
 
-        {% if has_attachments %}
+        {% if has_attachments and not is_web %}
         <section class="section" aria-labelledby="att-title">
             <h2 class="section-title" id="att-title">Attachments</h2>
             <div class="panel">
@@ -116,17 +220,10 @@
         </section>
         {% endif %}
 
-        <section class="section" aria-labelledby="original-title">
-            <h2 class="section-title visually-hidden" id="original-title">Original email</h2>
-            <details class="panel disclosure">
-                <summary>Original email</summary>
-                <pre class="original-body">{{ s.body or 'No email body was captured.' }}</pre>
-            </details>
-        </section>
 
         <section class="section" aria-labelledby="preview-title">
             <h2 class="section-title visually-hidden" id="preview-title">Reply preview</h2>
-            <details class="panel disclosure" {% if status not in ('sent', 'held') %}open{% endif %}>
+            <details class="panel disclosure" {% if status not in ('sent', 'held', 'manual') %}open{% endif %}>
                 <summary>{% if status == 'sent' %}Reply that was sent{% else %}Reply preview{% endif %}</summary>
                 <iframe class="reply-frame" title="Reply email preview" sandbox srcdoc="{{ reply_html }}"></iframe>
             </details>
@@ -143,6 +240,7 @@
                     {% elif status == 'sending' %}<span class="status status-sending">Sending</span>
                     {% elif status == 'failed' %}<span class="status status-failed">Failed</span>
                     {% elif status == 'held' %}<span class="status status-held">Not replied</span>
+                    {% elif status == 'manual' %}<span class="status status-manual">Reply not written yet</span>
                     {% else %}<span class="status status-pending">{% if auto_send_enabled %}Queued{% else %}Needs approval{% endif %}</span>{% endif %}
                 </dd>
                 <dt>{% if status == 'sent' %}Sent to{% else %}Send to{% endif %}</dt>
@@ -161,8 +259,11 @@
                     <button class="btn" type="button" disabled>Reply sent</button>
                 {% elif status == 'sending' %}
                     <button class="btn" type="button" disabled>Sending…</button>
+                {% elif status == 'manual' %}
+                    <button class="btn" type="button" disabled>Write the reply first</button>
+                    <p class="helper">Save your assessment, check the preview, then send.</p>
                 {% elif status == 'held' %}
-                    <p class="callout">This email came straight to ScamWatcher, not from a person forwarding it. A reply would go to the original sender, who is likely the scammer.</p>
+                    <p class="callout">This email came straight to our check address, not from a person forwarding it. A reply would go to the original sender, who is likely the scammer.</p>
                     <input type="hidden" name="confirm_direct" value="yes">
                     <button class="btn btn-warn" name="action" value="approve_send"
                             onclick="return confirm('This replies to the original sender, who may be the scammer. Send anyway?');">
@@ -177,6 +278,21 @@
             </form>
         </section>
 
+        {% if shots and status not in ('sent', 'sending') %}
+        <section class="panel rail-card">
+            <h2 class="rail-title">Automatic review</h2>
+            {% if auto_review_enabled %}
+            <form method="POST">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button class="btn btn-quiet" name="action" value="auto_review">{% if ar %}Review the screenshot again{% else %}Review the screenshot now{% endif %}</button>
+            </form>
+            <p class="helper">{% if ar %}Replaces the current draft{% if s.recommended_action %}, including any edits{% endif %}. Takes up to a minute.{% else %}Claude reads the screenshot and drafts the assessment. Takes up to a minute.{% endif %}</p>
+            {% else %}
+            <p class="helper">Off. Add ANTHROPIC_API_KEY to the dashboard's environment in Render to switch it on.</p>
+            {% endif %}
+        </section>
+        {% endif %}
+
         <section class="panel rail-card">
             <h2 class="rail-title">Your assessment</h2>
             <form method="POST" class="btn-stack">
@@ -188,6 +304,16 @@
                 {% endif %}
             </form>
             <p class="helper">For your records. This does not change the reply.</p>
+        </section>
+
+        <section class="panel rail-card">
+            <h2 class="rail-title">Delete</h2>
+            <form method="POST" onsubmit="return confirm('Permanently delete this submission and its screenshots? This cannot be undone.');">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <label class="check"><input type="checkbox" name="confirm_delete" value="yes" required> Delete this submission{% if shots %}, its screenshots{% endif %}{% if not is_web %} and the inbox email{% endif %}</label>
+                <button class="btn btn-warn" name="action" value="delete">Delete permanently</button>
+            </form>
+            <p class="helper">Use this when someone asks us to delete what they sent.{% if retention_days %} Everything is deleted automatically after {{ retention_days }} days.{% endif %}</p>
         </section>
     </aside>
 </div>

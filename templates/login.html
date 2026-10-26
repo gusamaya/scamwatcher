@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sign in · ScamWatcher</title>
+    <title>Sign in · {{ brand_name }}</title>
     <link rel="icon" href="{{ url_for('static', filename='logo.png') }}">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -16,7 +16,7 @@
         <span class="brand">
             <img src="{{ url_for('static', filename='logo.png') }}" alt="">
             <span>
-                <span class="brand-name">ScamWatcher</span>
+                <span class="brand-name">{{ brand_name }}</span>
                 <span class="brand-sub">Advisory dashboard</span>
             </span>
         </span>
@@ -30,7 +30,7 @@
     <main class="login-main">
         <form method="POST" class="login-form">
             <h1>Sign in</h1>
-            <p>Use your ScamWatcher admin account.</p>
+            <p>Use your {{ brand_name }} admin account.</p>
 
             {% if error %}
                 <div class="flash flash-error" role="alert">{{ error }}</div>
