@@ -977,7 +977,17 @@ def start_inbox_worker_thread():
     print("[InboxWorker] Embedded worker thread started.")
 
 
+_threads_pid = None
+
+
 def start_background_threads():
+    # Background threads belong to one process. If this is a different
+    # (forked) process from the one that started them, start them afresh here.
+    global _threads_pid, _auto_send_thread_started, _inbox_worker_thread_started
+    if _threads_pid != os.getpid():
+        _threads_pid = os.getpid()
+        _auto_send_thread_started = False
+        _inbox_worker_thread_started = False
     start_auto_send_thread()
     start_inbox_worker_thread()
 
@@ -1056,10 +1066,18 @@ def get_submissions(filter_value):
 
 ensure_schema()
 
-# Start the inbox checker and auto-sender as soon as the app loads, so emails
-# are processed even if nobody has opened the dashboard since the last deploy.
-# (Under the Flask debug reloader, only the child process starts them.)
-if os.environ.get("WERKZEUG_RUN_MAIN") == "true" or not os.environ.get("FLASK_DEBUG"):
+# Under gunicorn this module is imported in the parent process, which then
+# forks the process that serves requests. Threads must not be started before
+# that fork: a thread caught inside SQLite at the moment of the fork leaves
+# SQLite's internal lock taken in the child for ever, and every database call
+# there hangs. So under gunicorn the threads start in the serving process, on
+# its first request (Render's health check arrives within seconds of start-up).
+_RUNNING_UNDER_GUNICORN = "gunicorn" in os.path.basename(sys.argv[0] if sys.argv else "")
+
+if not _RUNNING_UNDER_GUNICORN and (
+    os.environ.get("WERKZEUG_RUN_MAIN") == "true" or not os.environ.get("FLASK_DEBUG")
+):
+    # Plain `python app.py` or the Flask reloader child: no fork follows.
     start_background_threads()
 
 
